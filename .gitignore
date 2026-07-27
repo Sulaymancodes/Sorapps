@@ -1,0 +1,35 @@
+# v0 sandbox internal files
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx_dev_runtime.ts
+__v0_jsx-dev-runtime.ts
+.snowflake/
+.v0-trash/
+.vercel/
+
+# Environment variables / secrets
+.env
+.env*.local
+.env.production
+
+# Dependencies & build
+node_modules/
+.pnpm-store/
+.next/
+out/
+dist/
+tsconfig.tsbuildinfo
+
+# OS / editor
+.DS_Store
+*.pem
+
+# Local SQLite database
+data/*.db
+data/*.db-*
+*.db
+*.db-*
+
+# Accidental local Postgres/Neon artifacts (may contain credentials in path)
+postgresql:/
+postgresql:
