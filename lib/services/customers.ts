@@ -1,6 +1,6 @@
-import { desc, eq } from 'drizzle-orm'
+import { desc, eq, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { customers } from '@/lib/db/schema'
+import { customers, sales } from '@/lib/db/schema'
 import type { Customer, CustomerInput } from '@/lib/types/crm'
 import { nextId } from '@/lib/utils/ids'
 
@@ -80,4 +80,25 @@ export async function updateCustomer(
     .returning()
 
   return row ? mapCustomer(row) : null
+}
+
+export async function deleteCustomer(id: string): Promise<{ deleted: boolean }> {
+  const existing = await getCustomer(id)
+  if (!existing) {
+    throw new Error('Customer not found')
+  }
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(sales)
+    .where(eq(sales.customerId, id))
+
+  if (count > 0) {
+    throw new Error(
+      `Cannot delete ${existing.name} — they have ${count} sale${count === 1 ? '' : 's'}. Remove related sales first.`
+    )
+  }
+
+  await db.delete(customers).where(eq(customers.id, id))
+  return { deleted: true }
 }

@@ -1,13 +1,14 @@
 'use client'
 
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Panel } from '@/components/common/Panel'
+import { SearchableSelect } from '@/components/common/SearchableSelect'
 import { BUSINESS_TYPES, NIGERIAN_STATES } from '@/lib/constants/options'
 import {
   createCustomerAction,
@@ -29,7 +30,9 @@ export function CustomerForm({ customer, mode = 'create' }: CustomerFormProps) {
   const {
     register,
     handleSubmit,
+    setValue,
     setError,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<CustomerFormValues>({
     defaultValues: {
@@ -38,11 +41,20 @@ export function CustomerForm({ customer, mode = 'create' }: CustomerFormProps) {
       phone: customer?.phone || '',
       address: customer?.address || '',
       city: customer?.city || '',
-      state: customer?.state || NIGERIAN_STATES[0],
+      state: customer?.state || '',
       business_type: customer?.business_type || BUSINESS_TYPES[0],
       credit_limit: customer?.credit_limit || 500000,
     },
   })
+
+  const selectedState = useWatch({ control, name: 'state' })
+
+  const stateOptions = (() => {
+    if (selectedState && !(NIGERIAN_STATES as readonly string[]).includes(selectedState)) {
+      return [selectedState, ...NIGERIAN_STATES] as string[]
+    }
+    return NIGERIAN_STATES as unknown as string[]
+  })()
 
   const onSubmit = async (values: CustomerFormValues) => {
     setFormError(null)
@@ -64,6 +76,14 @@ export function CustomerForm({ customer, mode = 'create' }: CustomerFormProps) {
     }
     if (!values.city.trim()) {
       setError('city', { message: 'Enter a city' })
+      return
+    }
+    if (
+      !values.state.trim() ||
+      (!(NIGERIAN_STATES as readonly string[]).includes(values.state) &&
+        values.state !== customer?.state)
+    ) {
+      setError('state', { message: 'Select a Nigerian state' })
       return
     }
 
@@ -133,13 +153,18 @@ export function CustomerForm({ customer, mode = 'create' }: CustomerFormProps) {
 
           <div>
             <Label htmlFor="state">State</Label>
-            <Select id="state" {...register('state')}>
-              {NIGERIAN_STATES.map((state) => (
-                <option key={state} value={state}>
-                  {state}
-                </option>
-              ))}
-            </Select>
+            <SearchableSelect
+              id="state"
+              options={stateOptions}
+              value={selectedState || ''}
+              onChange={(state) =>
+                setValue('state', state, { shouldValidate: true, shouldDirty: true })
+              }
+              placeholder="Search Nigerian states…"
+              emptyLabel="No state matches your search"
+              error={errors.state?.message}
+            />
+            <input type="hidden" {...register('state')} />
           </div>
 
           <div>

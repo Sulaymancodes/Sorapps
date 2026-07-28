@@ -1,22 +1,32 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import Link from 'next/link'
-import { Plus, Mail, Phone, Pencil } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Plus, Mail, Phone, Pencil, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
+import { deleteCustomerAction } from '@/app/actions/customers'
+import { NIGERIAN_STATES } from '@/lib/constants/options'
 import { formatCurrency, formatPhone } from '@/lib/utils/formatting'
 import type { Customer } from '@/lib/types/crm'
 
 export function CustomersPageClient({ customers }: { customers: Customer[] }) {
+  const router = useRouter()
   const [search, setSearch] = useState('')
   const [selectedState, setSelectedState] = useState('')
   const [selectedBusinessType, setSelectedBusinessType] = useState('')
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [pending, startTransition] = useTransition()
 
-  const states = useMemo(() => Array.from(new Set(customers.map((c) => c.state))).sort(), [customers])
+  const states = useMemo(() => {
+    const fromData = customers.map((c) => c.state)
+    return Array.from(new Set([...NIGERIAN_STATES, ...fromData])).sort()
+  }, [customers])
   const businessTypes = useMemo(
     () => Array.from(new Set(customers.map((c) => c.business_type))).sort(),
     [customers]
@@ -46,6 +56,25 @@ export function CustomersPageClient({ customers }: { customers: Customer[] }) {
     return filtered
   }, [customers, search, selectedState, selectedBusinessType])
 
+  function handleDelete(customer: Customer) {
+    const ok = window.confirm(
+      `Delete ${customer.name}? This cannot be undone.\n\nCustomers with existing sales cannot be deleted.`
+    )
+    if (!ok) return
+
+    setActionError(null)
+    setDeletingId(customer.id)
+    startTransition(async () => {
+      const result = await deleteCustomerAction(customer.id)
+      setDeletingId(null)
+      if (!result.success) {
+        setActionError(result.error)
+        return
+      }
+      router.refresh()
+    })
+  }
+
   return (
     <PageShell>
       <PageHeader
@@ -64,6 +93,12 @@ export function CustomersPageClient({ customers }: { customers: Customer[] }) {
           </Link>
         }
       />
+
+      {actionError && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {actionError}
+        </div>
+      )}
 
       <Panel>
         <div className="space-y-4">
@@ -203,6 +238,16 @@ export function CustomersPageClient({ customers }: { customers: Customer[] }) {
                           Edit
                         </Button>
                       </Link>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        disabled={pending && deletingId === customer.id}
+                        onClick={() => handleDelete(customer)}
+                      >
+                        <Trash2 className="size-3" />
+                        {deletingId === customer.id ? 'Deleting…' : 'Delete'}
+                      </Button>
                     </div>
                   </td>
                 </tr>

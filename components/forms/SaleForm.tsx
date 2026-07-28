@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { Panel } from '@/components/common/Panel'
+import { CustomerPicker } from '@/components/forms/CustomerPicker'
 import { INSTALLMENT_WEEK_OPTIONS, VAT_RATE } from '@/lib/constants/options'
 import { createSaleAction } from '@/app/actions/sales'
 import { formatCurrency } from '@/lib/utils/formatting'
@@ -62,6 +63,7 @@ export function SaleForm({
   const { fields, append, remove } = useFieldArray({ control, name: 'items' })
   const paymentType = useWatch({ control, name: 'payment_type' })
   const installmentWeeks = useWatch({ control, name: 'installment_weeks' })
+  const customerId = useWatch({ control, name: 'customer_id' })
   const watchedItems = useWatch({ control, name: 'items' })
   const discountPercent = useWatch({ control, name: 'discount_percent' }) || 0
   const transportCost = useWatch({ control, name: 'transport_cost' }) || 0
@@ -153,18 +155,18 @@ export function SaleForm({
       <Panel title="Customer & payment" description="Choose who is buying and how they will pay">
         <div className="space-y-5">
           <div>
-            <Label htmlFor="customer_id">Customer</Label>
-            <Select id="customer_id" {...register('customer_id')}>
-              <option value="">Select customer…</option>
-              {customers.map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.name} — {customer.city}
-                </option>
-              ))}
-            </Select>
-            {errors.customer_id && (
-              <p className="mt-1 text-xs text-destructive">{errors.customer_id.message}</p>
-            )}
+            <Label>Customer</Label>
+            <div className="mt-1.5">
+              <CustomerPicker
+                customers={customers}
+                value={customerId || ''}
+                onChange={(id) =>
+                  setValue('customer_id', id, { shouldValidate: true, shouldDirty: true })
+                }
+                error={errors.customer_id?.message}
+              />
+            </div>
+            <input type="hidden" {...register('customer_id')} />
           </div>
 
           <div>

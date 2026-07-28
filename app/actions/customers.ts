@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requireSession } from '@/lib/auth-server'
-import { createCustomer, updateCustomer } from '@/lib/services/customers'
+import { createCustomer, deleteCustomer, updateCustomer } from '@/lib/services/customers'
 import type { Customer } from '@/lib/types/crm'
 
 const customerSchema = z.object({
@@ -66,6 +66,28 @@ export async function updateCustomerAction(
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to update customer',
+    }
+  }
+}
+
+export async function deleteCustomerAction(id: string): Promise<ActionResult> {
+  await requireSession()
+  if (!id?.trim()) {
+    return { success: false, error: 'Customer id is required' }
+  }
+
+  try {
+    await deleteCustomer(id)
+    revalidatePath('/customers')
+    revalidatePath('/sales')
+    revalidatePath('/sales/new')
+    revalidatePath('/dashboard')
+    revalidatePath('/reports')
+    return { success: true, data: undefined }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to delete customer',
     }
   }
 }

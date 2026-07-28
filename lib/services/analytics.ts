@@ -3,7 +3,6 @@ import { listCustomers } from '@/lib/services/customers'
 import { listProducts } from '@/lib/services/products'
 import {
   listInvoices,
-  listPaymentReminders,
   listPaymentSchedules,
   listSales,
 } from '@/lib/services/sales'
@@ -250,31 +249,59 @@ export async function getOverallStats() {
 }
 
 export async function getCalendarEvents() {
-  const customers = await listCustomers()
-  const reminders = await listPaymentReminders(customers)
-  const now = new Date()
+  const [customers, schedules] = await Promise.all([listCustomers(), listPaymentSchedules()])
+  const customerMap = new Map(customers.map((c) => [c.id, c]))
+  const now = startOfDay(new Date())
 
-  return reminders
-    .map((reminder) => {
-      const daysUntil = Math.ceil(
-        (reminder.due_date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-      )
-      const customerName =
-        customers.find((c) => c.id === reminder.customer_id)?.name || 'Customer'
-      return {
-        id: reminder.id,
-        title: `Week ${reminder.week_number} installment — ${customerName}`,
-        description: `Sale ${reminder.sale_id}`,
-        amount: reminder.amount,
-        dueDate: reminder.due_date,
+  const events = []
+
+  for (const schedule of schedules) {
+    if (schedule.payment_type !== 'installment') continue
+    const customer = customerMap.get(schedule.customer_id)
+    const totalWeeks = schedule.installment_weeks || schedule.installments.length
+    const paidCount = schedule.installments.filter((i) => i.status === 'paid').length
+
+    for (const inst of schedule.installments) {
+      if (inst.status === 'paid') continue
+
+      const due = startOfDay(inst.due_date)
+      const daysUntil = Math.round((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+
+      let bucket: 'overdue' | 'due_today' | 'this_week' | 'upcoming' | 'later'
+      if (daysUntil < 0) bucket = 'overdue'
+      else if (daysUntil === 0) bucket = 'due_today'
+      else if (daysUntil <= 7) bucket = 'this_week'
+      else if (daysUntil <= 30) bucket = 'upcoming'
+      else bucket = 'later'
+
+      events.push({
+        id: inst.id,
+        sale_id: schedule.sale_id,
+        schedule_id: schedule.id,
+        customer_id: schedule.customer_id,
+        customer_name: customer?.name || 'Unknown customer',
+        customer_phone: customer?.phone || '',
+        customer_email: customer?.email || '',
+        customer_city: customer?.city || '',
+        week_number: inst.week_number,
+        total_weeks: totalWeeks,
+        amount: inst.amount,
+        dueDate: inst.due_date,
         daysUntil,
+        bucket,
+        schedule_outstanding: Math.max(0, schedule.total_amount - schedule.paid_amount),
+        paid_installments: paidCount,
         color:
-          reminder.status === 'overdue'
+          bucket === 'overdue'
             ? ('red' as const)
-            : reminder.status === 'due_today'
+            : bucket === 'due_today'
               ? ('orange' as const)
-              : ('blue' as const),
-      }
-    })
-    .sort((a, b) => a.daysUntil - b.daysUntil)
+              : bucket === 'this_week'
+                ? ('blue' as const)
+                : ('green' as const),
+      })
+    }
+  }
+
+  return events.sort((a, b) => a.daysUntil - b.daysUntil || a.customer_name.localeCompare(b.customer_name))
 }
