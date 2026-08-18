@@ -10,21 +10,38 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
-export const customers = pgTable('customers', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  email: text('email').notNull(),
-  phone: text('phone').notNull(),
-  address: text('address').notNull(),
-  city: text('city').notNull(),
-  state: text('state').notNull(),
-  businessType: text('business_type').notNull(),
-  creditLimit: integer('credit_limit').notNull().default(0),
-  totalPurchases: integer('total_purchases').notNull().default(0),
-  outstandingBalance: integer('outstanding_balance').notNull().default(0),
-  avatar: text('avatar'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-})
+export const customers = pgTable(
+  'customers',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    email: text('email').notNull().default(''),
+    phone: text('phone').notNull(),
+    nin: text('nin').notNull().default(''),
+    bvn: text('bvn').notNull().default(''),
+    address: text('address').notNull(),
+    city: text('city').notNull(),
+    state: text('state').notNull(),
+    lga: text('lga').notNull().default(''),
+    latitude: real('latitude'),
+    longitude: real('longitude'),
+    gpsCapturedAt: timestamp('gps_captured_at'),
+    gpsLocked: boolean('gps_locked').notNull().default(false),
+    gpsOutOfArea: boolean('gps_out_of_area').notNull().default(false),
+    photoUrl: text('photo_url').notNull().default(''),
+    businessType: text('business_type').notNull(),
+    creditLimit: integer('credit_limit').notNull().default(0),
+    totalPurchases: integer('total_purchases').notNull().default(0),
+    outstandingBalance: integer('outstanding_balance').notNull().default(0),
+    avatar: text('avatar'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('customers_phone_idx').on(table.phone),
+    index('customers_nin_idx').on(table.nin),
+    index('customers_bvn_idx').on(table.bvn),
+  ]
+)
 
 export const products = pgTable(
   'products',
@@ -64,6 +81,12 @@ export const sales = pgTable(
     transportCost: integer('transport_cost').notNull().default(0),
     profit: integer('profit').notNull().default(0),
     notes: text('notes').notNull().default(''),
+    latitude: real('latitude'),
+    longitude: real('longitude'),
+    gpsCapturedAt: timestamp('gps_captured_at'),
+    gpsLocked: boolean('gps_locked').notNull().default(false),
+    gpsOutOfArea: boolean('gps_out_of_area').notNull().default(false),
+    sitePhotoUrl: text('site_photo_url').notNull().default(''),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [index('sales_customer_id_idx').on(table.customerId)]
@@ -223,6 +246,39 @@ export const warrantyClaims = pgTable(
   (table) => [index('warranty_claims_warranty_id_idx').on(table.warrantyId)]
 )
 
+export const activationCodes = pgTable(
+  'activation_codes',
+  {
+    id: text('id').primaryKey(),
+    code: text('code').notNull(),
+    phone: text('phone').notNull(),
+    customerId: text('customer_id')
+      .notNull()
+      .references(() => customers.id),
+    saleId: text('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+    warrantyId: text('warranty_id').references(() => warranties.id, {
+      onDelete: 'set null',
+    }),
+    deviceSerial: text('device_serial').notNull().default(''),
+    messageBody: text('message_body').notNull(),
+    status: text('status').notNull().default('pending'), // pending | sent | failed | used | expired
+    validityDays: integer('validity_days').notNull().default(30),
+    expiresAt: timestamp('expires_at').notNull(),
+    providerMessageId: text('provider_message_id'),
+    providerResponse: text('provider_response'),
+    errorMessage: text('error_message'),
+    sentAt: timestamp('sent_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    createdByUserId: text('created_by_user_id'),
+  },
+  (table) => [
+    index('activation_codes_customer_id_idx').on(table.customerId),
+    index('activation_codes_sale_id_idx').on(table.saleId),
+    index('activation_codes_phone_idx').on(table.phone),
+    index('activation_codes_status_idx').on(table.status),
+  ]
+)
+
 export const productsRelations = relations(products, ({ many }) => ({
   saleItems: many(saleItems),
   inventoryMovements: many(inventoryMovements),
@@ -328,6 +384,21 @@ export const warrantiesRelations = relations(warranties, ({ one, many }) => ({
 export const warrantyClaimsRelations = relations(warrantyClaims, ({ one }) => ({
   warranty: one(warranties, {
     fields: [warrantyClaims.warrantyId],
+    references: [warranties.id],
+  }),
+}))
+
+export const activationCodesRelations = relations(activationCodes, ({ one }) => ({
+  customer: one(customers, {
+    fields: [activationCodes.customerId],
+    references: [customers.id],
+  }),
+  sale: one(sales, {
+    fields: [activationCodes.saleId],
+    references: [sales.id],
+  }),
+  warranty: one(warranties, {
+    fields: [activationCodes.warrantyId],
     references: [warranties.id],
   }),
 }))

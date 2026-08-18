@@ -1,14 +1,15 @@
 'use client'
 
-import { useMemo, useState, Fragment } from 'react'
+import { useMemo, useState, Fragment, useTransition } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
-import { Plus, CreditCard, CalendarClock } from 'lucide-react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Plus, CreditCard, CalendarClock, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
+import { deleteSaleAction } from '@/app/actions/sales'
 import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import type {
   Customer,
@@ -23,19 +24,25 @@ export default function SalesPage({
   sales,
   customers: customersList,
   schedules: schedulesList,
+  isAdmin = false,
 }: {
   sales: Sale[]
   customers: Customer[]
   schedules: PaymentSchedule[]
+  isAdmin?: boolean
 }) {
+  const router = useRouter()
   const searchParams = useSearchParams()
   const createdId = searchParams.get('created')
   const createdInvoice = searchParams.get('invoice')
+  const [isPending, startTransition] = useTransition()
 
   const [search, setSearch] = useState('')
   const [selectedStatus, setSelectedStatus] = useState('')
   const [selectedPaymentType, setSelectedPaymentType] = useState<PaymentType | ''>('')
   const [expandedSale, setExpandedSale] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const customers = useMemo(() => {
     const map = new Map<string, Customer>()
@@ -116,6 +123,27 @@ export default function SalesPage({
     cancelled: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200',
   }
 
+  function handleDelete(sale: Sale) {
+    const customer = customers.get(sale.customer_id)
+    const ok = window.confirm(
+      `Delete ${sale.id}${customer ? ` (${customer.name})` : ''}?\n\nThis restores product stock, removes the invoice/schedule/warranties, and cannot be undone.`
+    )
+    if (!ok) return
+
+    setActionError(null)
+    setDeletingId(sale.id)
+    startTransition(async () => {
+      const result = await deleteSaleAction(sale.id)
+      setDeletingId(null)
+      if (!result.success) {
+        setActionError(result.error)
+        return
+      }
+      if (expandedSale === sale.id) setExpandedSale(null)
+      router.refresh()
+    })
+  }
+
   return (
     <PageShell>
       <PageHeader
@@ -134,6 +162,12 @@ export default function SalesPage({
           </Link>
         }
       />
+
+      {actionError && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {actionError}
+        </div>
+      )}
 
       {createdId && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
@@ -309,8 +343,17 @@ export default function SalesPage({
           <table className="w-full">
             <thead>
               <tr className="border-b border-border/70 bg-secondary/40">
-                {['Sale ID', 'Customer', 'Date', 'Payment', 'Amount', 'Paid', 'Status', 'Schedule'].map(
-                  (h, i) => (
+                {[
+                  'Sale ID',
+                  'Customer',
+                  'Date',
+                  'Payment',
+                  'Amount',
+                  'Paid',
+                  'Status',
+                  'Schedule',
+                  ...(isAdmin ? ['Action'] : []),
+                ].map((h, i) => (
                     <th
                       key={h}
                       className={`px-5 py-3.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground ${
@@ -328,6 +371,7 @@ export default function SalesPage({
                 const customer = customers.get(sale.customer_id)
                 const schedule = schedules.get(sale.id)
                 const isExpanded = expandedSale === sale.id
+                const colSpan = isAdmin ? 9 : 8
 
                 return (
                   <Fragment key={sale.id}>
@@ -375,10 +419,25 @@ export default function SalesPage({
                           {isExpanded ? 'Hide' : 'Timeline'}
                         </Button>
                       </td>
+                      {isAdmin && (
+                        <td className="px-5 py-4">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            disabled={isPending || deletingId === sale.id}
+                            onClick={() => handleDelete(sale)}
+                          >
+                            <Trash2 className="size-3.5" />
+                            {deletingId === sale.id ? 'Deleting…' : 'Delete'}
+                          </Button>
+                        </td>
+                      )}
                     </tr>
                     {isExpanded && schedule && (
                       <tr className="bg-secondary/30">
-                        <td colSpan={8} className="px-5 py-4">
+                        <td colSpan={colSpan} className="px-5 py-4">
                           <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                             {sale.payment_type === 'full'
                               ? 'Full payment timeline'

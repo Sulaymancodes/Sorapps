@@ -1,30 +1,279 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { useRouter } from 'next/navigation'
-import { Plus, Trash2, CreditCard, CalendarClock } from 'lucide-react'
+import {
+  Plus,
+  Trash2,
+  CreditCard,
+  CalendarClock,
+  Search,
+  Lock,
+  Unlock,
+  UserPlus,
+  Users,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
 import { Panel } from '@/components/common/Panel'
+import { SearchableSelect } from '@/components/common/SearchableSelect'
 import { CustomerPicker } from '@/components/forms/CustomerPicker'
-import { INSTALLMENT_WEEK_OPTIONS, VAT_RATE } from '@/lib/constants/options'
+import { SiteVerificationPanel } from '@/components/forms/SiteVerificationPanel'
+import { BUSINESS_TYPES, INSTALLMENT_WEEK_OPTIONS, NIGERIAN_STATES } from '@/lib/constants/options'
+import { getLgasForState } from '@/lib/constants/lgas'
 import { createSaleAction } from '@/app/actions/sales'
+import { checkCustomerDuplicateAction } from '@/app/actions/customers'
+import { createSitePhotoUploadUrlAction } from '@/app/actions/uploads'
 import { formatCurrency } from '@/lib/utils/formatting'
 import { cn } from '@/lib/utils'
-import type { Customer, PaymentType, Product } from '@/lib/types/crm'
+import type { Customer, PaymentType, Product, SaleSiteGpsInput } from '@/lib/types/crm'
+
+type DuplicateField = 'phone' | 'nin' | 'bvn'
+type DuplicateMatch = {
+  id: string
+  name: string
+  phone: string
+  nin: string
+  bvn: string
+  city: string
+  state: string
+}
+
+/** NIN (NIMC) and BVN (CBN/NIBSS) are both 11 digits. */
+const NIN_DIGITS = 11
+const BVN_DIGITS = 11
+/** Local Nigerian mobile: 0 + 10 digits. International: 234 + 10 digits. */
+const PHONE_LOCAL_DIGITS = 11
+const PHONE_INTL_DIGITS = 13
+const UNIQUE_CHECK_DEBOUNCE_MS = 600
+
+function digitsOnly(value: string) {
+  return value.replace(/\D/g, '')
+}
+
+function maxDigitsForField(field: DuplicateField, digits: string): number {
+  if (field === 'nin') return NIN_DIGITS
+  if (field === 'bvn') return BVN_DIGITS
+  if (digits.startsWith('234')) return PHONE_INTL_DIGITS
+  return PHONE_LOCAL_DIGITS
+}
+
+function isCompletePhone(value: string) {
+  const digits = digitsOnly(value)
+  if (digits.startsWith('234') && digits.length === PHONE_INTL_DIGITS) return true
+  if (digits.startsWith('0') && digits.length === PHONE_LOCAL_DIGITS) return true
+  if (digits.length === 10 && /^[789]/.test(digits)) return true
+  return false
+}
+
+function isCompleteUniqueValue(field: DuplicateField, value: string) {
+  const digits = digitsOnly(value)
+  if (field === 'nin') return digits.length === NIN_DIGITS
+  if (field === 'bvn') return digits.length === BVN_DIGITS
+  return isCompletePhone(value)
+}
+
+function uniqueFieldHint(field: DuplicateField) {
+  if (field === 'nin') return `Exactly ${NIN_DIGITS} digits — search runs when complete`
+  if (field === 'bvn') return `Exactly ${BVN_DIGITS} digits — search runs when complete`
+  return `Exactly ${PHONE_LOCAL_DIGITS} digits (e.g. 0701xxxxxxx) — search runs when complete`
+}
+
+function uniqueFieldIncompleteMessage(field: DuplicateField) {
+  if (field === 'nin') return `NIN must be exactly ${NIN_DIGITS} digits`
+  if (field === 'bvn') return `BVN must be exactly ${BVN_DIGITS} digits`
+  return `Phone must be exactly ${PHONE_LOCAL_DIGITS} digits starting with 0`
+}
+
+const GEO_LOCK_KEY = 'sorapps-geo-lock'
+const PRODUCT_LOCK_KEY = 'sorapps-product-lock'
+
+type GeoLock = {
+  locked: boolean
+  state: string
+  lga: string
+}
+
+type ProductLock = {
+  locked: boolean
+  product_id: string
+  quantity: number
+}
+
+type CustomerMode = 'existing' | 'new'
 
 type SaleFormValues = {
+  customer_mode: CustomerMode
   customer_id: string
+  new_customer: {
+    name: string
+    email: string
+    phone: string
+    nin: string
+    bvn: string
+    address: string
+    city: string
+    state: string
+    lga: string
+    business_type: string
+  }
   payment_type: PaymentType
   installment_weeks: number
   discount_percent: number
   transport_cost: number
   notes: string
-  items: { product_id: string; quantity: number }[]
+  items: { product_id: string; quantity: number; serial_number: string }[]
+}
+
+type FieldDupState = {
+  checking: boolean
+  matches: DuplicateMatch[]
+}
+
+function emptyDup(): FieldDupState {
+  return { checking: false, matches: [] }
+}
+
+function DuplicateHint({
+  field,
+  state,
+}: {
+  field: DuplicateField
+  state: FieldDupState
+}) {
+  if (state.checking) {
+    return <p className="mt-1 text-xs text-muted-foreground">Checking {field.toUpperCase()}…</p>
+  }
+  if (!state.matches.length) return null
+  return (
+    <div className="mt-1 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+      <p className="font-medium">Duplicate {field.toUpperCase()} found</p>
+      <ul className="mt-1 space-y-0.5">
+        {state.matches.slice(0, 3).map((m) => (
+          <li key={m.id}>
+            {m.name} · {m.phone}
+            {m.city ? ` · ${m.city}` : ''}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 text-destructive/80">Change this value before submitting.</p>
+    </div>
+  )
+}
+
+function UniqueField({
+  field,
+  label,
+  placeholder,
+  dup,
+  value,
+  error,
+  onChange,
+  onSearch,
+}: {
+  field: DuplicateField
+  label: string
+  placeholder: string
+  dup: FieldDupState
+  value: string
+  error?: string
+  onChange: (next: string) => void
+  onSearch: () => void
+}) {
+  const complete = isCompleteUniqueValue(field, value)
+  const maxLen = maxDigitsForField(field, digitsOnly(value))
+
+  return (
+    <div>
+      <Label htmlFor={`new_customer.${field}`}>{label}</Label>
+      <div className="mt-1.5 flex gap-2">
+        <Input
+          id={`new_customer.${field}`}
+          name={`new_customer.${field}`}
+          value={value}
+          placeholder={placeholder}
+          type="tel"
+          inputMode="numeric"
+          autoComplete="off"
+          maxLength={maxLen}
+          onChange={(e) => {
+            const digits = digitsOnly(e.target.value)
+            const limit = maxDigitsForField(field, digits)
+            onChange(digits.slice(0, limit))
+          }}
+          onPaste={(e) => {
+            e.preventDefault()
+            const pasted = digitsOnly(e.clipboardData.getData('text'))
+            const limit = maxDigitsForField(field, pasted)
+            onChange(pasted.slice(0, limit))
+          }}
+          className={cn(dup.matches.length > 0 && 'border-destructive')}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="shrink-0"
+          aria-label={`Search ${label} for duplicates`}
+          disabled={dup.checking || !complete}
+          title={complete ? `Check ${label} for duplicates` : uniqueFieldHint(field)}
+          onClick={onSearch}
+        >
+          <Search className="size-4" />
+        </Button>
+      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">{uniqueFieldHint(field)}</p>
+      {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
+      <DuplicateHint field={field} state={dup} />
+    </div>
+  )
+}
+
+function readGeoLock(): GeoLock {
+  if (typeof window === 'undefined') {
+    return { locked: false, state: '', lga: '' }
+  }
+  try {
+    const raw = localStorage.getItem(GEO_LOCK_KEY)
+    if (!raw) return { locked: false, state: '', lga: '' }
+    const parsed = JSON.parse(raw) as GeoLock
+    return {
+      locked: Boolean(parsed.locked),
+      state: parsed.state || '',
+      lga: parsed.lga || '',
+    }
+  } catch {
+    return { locked: false, state: '', lga: '' }
+  }
+}
+
+function writeGeoLock(lock: GeoLock) {
+  localStorage.setItem(GEO_LOCK_KEY, JSON.stringify(lock))
+}
+
+function readProductLock(): ProductLock {
+  if (typeof window === 'undefined') {
+    return { locked: false, product_id: '', quantity: 1 }
+  }
+  try {
+    const raw = localStorage.getItem(PRODUCT_LOCK_KEY)
+    if (!raw) return { locked: false, product_id: '', quantity: 1 }
+    const parsed = JSON.parse(raw) as ProductLock
+    return {
+      locked: Boolean(parsed.locked),
+      product_id: parsed.product_id || '',
+      quantity: Math.max(1, Number(parsed.quantity) || 1),
+    }
+  } catch {
+    return { locked: false, product_id: '', quantity: 1 }
+  }
+}
+
+function writeProductLock(lock: ProductLock) {
+  localStorage.setItem(PRODUCT_LOCK_KEY, JSON.stringify(lock))
 }
 
 export function SaleForm({
@@ -35,11 +284,15 @@ export function SaleForm({
   products: Product[]
 }) {
   const router = useRouter()
-
-  const inStockProducts = useMemo(
-    () => products.filter((p) => p.stock > 0).sort((a, b) => a.name.localeCompare(b.name)),
-    [products]
-  )
+  const [geoLocked, setGeoLocked] = useState(false)
+  const [productLocked, setProductLocked] = useState(false)
+  const [siteGps, setSiteGps] = useState<SaleSiteGpsInput | null>(null)
+  const [sitePhotoFile, setSitePhotoFile] = useState<File | null>(null)
+  const [siteError, setSiteError] = useState<string | null>(null)
+  const [dupPhone, setDupPhone] = useState<FieldDupState>(emptyDup)
+  const [dupNin, setDupNin] = useState<FieldDupState>(emptyDup)
+  const [dupBvn, setDupBvn] = useState<FieldDupState>(emptyDup)
+  const [formError, setFormError] = useState<string | null>(null)
 
   const {
     register,
@@ -47,26 +300,83 @@ export function SaleForm({
     handleSubmit,
     setValue,
     setError,
+    clearErrors,
+    getValues,
+    reset,
     formState: { errors, isSubmitting },
   } = useForm<SaleFormValues>({
     defaultValues: {
+      customer_mode: customers.length > 0 ? 'existing' : 'new',
       customer_id: '',
+      new_customer: {
+        name: '',
+        email: '',
+        phone: '',
+        nin: '',
+        bvn: '',
+        address: '',
+        city: '',
+        state: '',
+        lga: '',
+        business_type: BUSINESS_TYPES[0],
+      },
       payment_type: 'full',
       installment_weeks: 4,
       discount_percent: 0,
       transport_cost: 0,
       notes: '',
-      items: [{ product_id: '', quantity: 1 }],
+      items: [{ product_id: '', quantity: 1, serial_number: '' }],
     },
   })
 
   const { fields, append, remove } = useFieldArray({ control, name: 'items' })
   const paymentType = useWatch({ control, name: 'payment_type' })
   const installmentWeeks = useWatch({ control, name: 'installment_weeks' })
+  const isInstallment = paymentType === 'installment'
+  const customerMode = useWatch({ control, name: 'customer_mode' })
   const customerId = useWatch({ control, name: 'customer_id' })
   const watchedItems = useWatch({ control, name: 'items' })
-  const discountPercent = useWatch({ control, name: 'discount_percent' }) || 0
-  const transportCost = useWatch({ control, name: 'transport_cost' }) || 0
+  const selectedState = useWatch({ control, name: 'new_customer.state' }) || ''
+  const selectedLga = useWatch({ control, name: 'new_customer.lga' }) || ''
+  const firstProductId = watchedItems?.[0]?.product_id || ''
+
+  const inStockProducts = useMemo(() => {
+    return products
+      .filter((p) => p.stock > 0 || (productLocked && p.id === firstProductId))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [products, productLocked, firstProductId])
+
+  useEffect(() => {
+    const lock = readGeoLock()
+    if (lock.locked && lock.state) {
+      setGeoLocked(true)
+      setValue('new_customer.state', lock.state)
+      setValue('new_customer.lga', lock.lga)
+    }
+    const productLock = readProductLock()
+    if (productLock.locked && productLock.product_id) {
+      setProductLocked(true)
+      setValue('items', [
+        {
+          product_id: productLock.product_id,
+          quantity: productLock.quantity,
+          serial_number: '',
+        },
+      ])
+    }
+  }, [setValue])
+
+  const lgaOptions = useMemo(() => getLgasForState(selectedState), [selectedState])
+
+  const stateOptions = useMemo(() => {
+    if (selectedState && !(NIGERIAN_STATES as readonly string[]).includes(selectedState)) {
+      return [selectedState, ...NIGERIAN_STATES] as string[]
+    }
+    return NIGERIAN_STATES as unknown as string[]
+  }, [selectedState])
+
+  const hasDuplicates =
+    dupPhone.matches.length > 0 || dupNin.matches.length > 0 || dupBvn.matches.length > 0
 
   const totals = useMemo(() => {
     const subtotal = (watchedItems || []).reduce((sum, line) => {
@@ -74,34 +384,241 @@ export function SaleForm({
       const qty = Number(line.quantity) || 0
       return sum + (product?.price || 0) * qty
     }, 0)
-    const discountAmount = (subtotal * Number(discountPercent || 0)) / 100
-    const afterDiscount = subtotal - discountAmount
-    const vat = Math.round(afterDiscount * VAT_RATE)
-    const transport = Math.max(0, Number(transportCost) || 0)
-    const total = Math.round(afterDiscount + vat + transport)
-    return { subtotal, discountAmount, vat, transport, total }
-  }, [watchedItems, discountPercent, transportCost, products])
+    return { subtotal, total: Math.round(subtotal) }
+  }, [watchedItems, products])
 
-  const onSubmit = async (values: SaleFormValues) => {
-    if (!values.customer_id) {
-      setError('customer_id', { message: 'Select a customer' })
+  const clearFieldError = useCallback(
+    (field: DuplicateField) => {
+      clearErrors(`new_customer.${field}`)
+    },
+    [clearErrors]
+  )
+
+  const runDuplicateCheck = useCallback(
+    async (field: DuplicateField, opts?: { silentIncomplete?: boolean }) => {
+      const values = getValues('new_customer')
+      const raw = values[field]?.trim() || ''
+      const value = field === 'phone' ? raw : digitsOnly(raw)
+      const setDup =
+        field === 'phone' ? setDupPhone : field === 'nin' ? setDupNin : setDupBvn
+
+      if (!isCompleteUniqueValue(field, value)) {
+        setDup(emptyDup())
+        if (!opts?.silentIncomplete && value) {
+          setError(`new_customer.${field}`, { message: uniqueFieldIncompleteMessage(field) })
+        }
+        return
+      }
+
+      setDup({ checking: true, matches: [] })
+      const result = await checkCustomerDuplicateAction({
+        phone: field === 'phone' ? value : undefined,
+        nin: field === 'nin' ? value : undefined,
+        bvn: field === 'bvn' ? value : undefined,
+      })
+
+      if (!result.success) {
+        setDup(emptyDup())
+        setFormError(result.error)
+        return
+      }
+
+      const hit = result.data.find((d) => d.field === field)
+      setDup({ checking: false, matches: hit?.matches ?? [] })
+      if (hit?.matches.length) {
+        setError(`new_customer.${field}`, {
+          message: `Duplicate ${field.toUpperCase()} — already used by ${hit.matches[0].name}`,
+        })
+      } else {
+        clearErrors(`new_customer.${field}`)
+      }
+    },
+    [getValues, setError, clearErrors]
+  )
+
+  const clearFieldDup = (field: DuplicateField) => {
+    if (field === 'phone') setDupPhone(emptyDup())
+    if (field === 'nin') setDupNin(emptyDup())
+    if (field === 'bvn') setDupBvn(emptyDup())
+    clearFieldError(field)
+  }
+
+  const phoneValue = useWatch({ control, name: 'new_customer.phone' }) || ''
+  const ninValue = useWatch({ control, name: 'new_customer.nin' }) || ''
+  const bvnValue = useWatch({ control, name: 'new_customer.bvn' }) || ''
+
+  useEffect(() => {
+    if (customerMode !== 'new') return
+    const timer = window.setTimeout(() => {
+      if (isCompleteUniqueValue('phone', phoneValue)) {
+        void runDuplicateCheck('phone', { silentIncomplete: true })
+      } else {
+        setDupPhone(emptyDup())
+      }
+    }, UNIQUE_CHECK_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [phoneValue, customerMode, runDuplicateCheck])
+
+  useEffect(() => {
+    if (customerMode !== 'new') return
+    const timer = window.setTimeout(() => {
+      if (isCompleteUniqueValue('nin', ninValue)) {
+        void runDuplicateCheck('nin', { silentIncomplete: true })
+      } else {
+        setDupNin(emptyDup())
+      }
+    }, UNIQUE_CHECK_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [ninValue, customerMode, runDuplicateCheck])
+
+  useEffect(() => {
+    if (customerMode !== 'new') return
+    const timer = window.setTimeout(() => {
+      if (isCompleteUniqueValue('bvn', bvnValue)) {
+        void runDuplicateCheck('bvn', { silentIncomplete: true })
+      } else {
+        setDupBvn(emptyDup())
+      }
+    }, UNIQUE_CHECK_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [bvnValue, customerMode, runDuplicateCheck])
+
+  const toggleGeoLock = () => {
+    const state = getValues('new_customer.state')
+    const lga = getValues('new_customer.lga')
+    if (!geoLocked) {
+      if (!state.trim()) {
+        setError('new_customer.state', { message: 'Select a state before locking' })
+        return
+      }
+      if (!lga.trim()) {
+        setError('new_customer.lga', { message: 'Select an LGA before locking' })
+        return
+      }
+      writeGeoLock({ locked: true, state, lga })
+      setGeoLocked(true)
       return
     }
+    writeGeoLock({ locked: false, state, lga })
+    setGeoLocked(false)
+  }
+
+  const toggleProductLock = () => {
+    const items = getValues('items')
+    const productId = items[0]?.product_id || ''
+    const quantity = Math.max(1, Number(items[0]?.quantity) || 1)
+    if (!productLocked) {
+      if (!productId.trim()) {
+        setError('items', { message: 'Select a product before locking' })
+        return
+      }
+      // Keep a single locked product line for queue entry
+      setValue('items', [
+        {
+          product_id: productId,
+          quantity,
+          serial_number: items[0]?.serial_number || '',
+        },
+      ])
+      writeProductLock({ locked: true, product_id: productId, quantity })
+      setProductLocked(true)
+      return
+    }
+    writeProductLock({ locked: false, product_id: productId, quantity })
+    setProductLocked(false)
+  }
+
+  const onSubmit = async (values: SaleFormValues) => {
+    setFormError(null)
+    setSiteError(null)
+
+    if (inStockProducts.length === 0) {
+      setError('items', { message: 'Add products with stock before creating a sale' })
+      return
+    }
+
+    if (!siteGps?.locked) {
+      setSiteError('Take the site photo to capture and lock GPS')
+      return
+    }
+    if (!sitePhotoFile) {
+      setSiteError('Attach a site photo before saving')
+      return
+    }
+
+    if (values.customer_mode === 'existing') {
+      if (!values.customer_id) {
+        setError('customer_id', { message: 'Select a customer' })
+        return
+      }
+    } else {
+      const nc = values.new_customer
+      if (!nc.name.trim() || nc.name.trim().length < 2) {
+        setError('new_customer.name', { message: 'Enter the customer name' })
+        return
+      }
+      if (!isCompletePhone(nc.phone)) {
+        setError('new_customer.phone', {
+          message: 'Enter a complete Nigerian phone number (11 digits starting with 0)',
+        })
+        return
+      }
+      if (digitsOnly(nc.nin).length !== NIN_DIGITS) {
+        setError('new_customer.nin', { message: `NIN must be exactly ${NIN_DIGITS} digits` })
+        return
+      }
+      if (digitsOnly(nc.bvn).length !== BVN_DIGITS) {
+        setError('new_customer.bvn', { message: `BVN must be exactly ${BVN_DIGITS} digits` })
+        return
+      }
+      if (!nc.address.trim()) {
+        setError('new_customer.address', { message: 'Enter an address' })
+        return
+      }
+      if (!nc.city.trim()) {
+        setError('new_customer.city', { message: 'Enter a city' })
+        return
+      }
+      if (!nc.state.trim()) {
+        setError('new_customer.state', { message: 'Select a state' })
+        return
+      }
+      if (!nc.lga.trim()) {
+        setError('new_customer.lga', { message: 'Select a local government' })
+        return
+      }
+
+      // Final duplicate sweep before submit
+      const dupResult = await checkCustomerDuplicateAction({
+        phone: nc.phone,
+        nin: nc.nin,
+        bvn: nc.bvn,
+      })
+      if (!dupResult.success) {
+        setFormError(dupResult.error)
+        return
+      }
+      if (dupResult.data.length > 0) {
+        for (const d of dupResult.data) {
+          const match = d.matches[0]
+          setError(`new_customer.${d.field}`, {
+            message: `Duplicate ${d.field.toUpperCase()} — already used by ${match?.name}`,
+          })
+          if (d.field === 'phone') setDupPhone({ checking: false, matches: d.matches })
+          if (d.field === 'nin') setDupNin({ checking: false, matches: d.matches })
+          if (d.field === 'bvn') setDupBvn({ checking: false, matches: d.matches })
+        }
+        setFormError('Fix duplicate phone, NIN, or BVN before saving this sale.')
+        return
+      }
+    }
+
     if (!values.items.some((item) => item.product_id && item.quantity > 0)) {
       setError('items', { message: 'Add at least one product line' })
       return
     }
     if (values.payment_type === 'installment' && !values.installment_weeks) {
       setError('installment_weeks', { message: 'Choose how many weeks' })
-      return
-    }
-
-    if (customers.length === 0) {
-      setError('customer_id', { message: 'Add a customer before creating a sale' })
-      return
-    }
-    if (inStockProducts.length === 0) {
-      setError('items', { message: 'Add products with stock before creating a sale' })
       return
     }
 
@@ -123,28 +640,153 @@ export function SaleForm({
       }
     }
 
+    for (const item of values.items.filter((i) => i.product_id)) {
+      const serial = (item.serial_number || '').trim()
+      if (!serial) {
+        setError('items', { message: 'Enter a product serial number for each line' })
+        return
+      }
+      const qty = Number(item.quantity) || 1
+      const serials = serial
+        .split(/[,\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      if (qty > 1 && serials.length !== qty) {
+        setError('items', {
+          message: `For qty ${qty}, enter ${qty} serial numbers separated by commas`,
+        })
+        return
+      }
+    }
+
+    // Upload site photo to Cloudflare R2 only when submitting the sale
+    const prepared = await createSitePhotoUploadUrlAction({
+      contentType: sitePhotoFile.type || 'image/jpeg',
+      fileName: sitePhotoFile.name || 'site.jpg',
+    })
+    if (!prepared.success) {
+      setSiteError(prepared.error)
+      return
+    }
+
+    const put = await fetch(prepared.data.uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': sitePhotoFile.type || 'image/jpeg',
+      },
+      body: sitePhotoFile,
+    })
+    if (!put.ok) {
+      setSiteError('Upload to Cloudflare R2 failed. Check bucket CORS and credentials.')
+      return
+    }
+    const sitePhotoUrl = prepared.data.publicUrl
+
     const result = await createSaleAction({
-      customer_id: values.customer_id,
+      customer_id: values.customer_mode === 'existing' ? values.customer_id : undefined,
+      new_customer:
+        values.customer_mode === 'new'
+          ? {
+              name: values.new_customer.name.trim(),
+              email: values.new_customer.email.trim(),
+              phone: values.new_customer.phone.trim(),
+              nin: digitsOnly(values.new_customer.nin),
+              bvn: digitsOnly(values.new_customer.bvn),
+              address: values.new_customer.address.trim(),
+              city: values.new_customer.city.trim(),
+              state: values.new_customer.state.trim(),
+              lga: values.new_customer.lga.trim(),
+              business_type: values.new_customer.business_type,
+              credit_limit: 0,
+            }
+          : undefined,
       payment_type: values.payment_type,
       installment_weeks:
         values.payment_type === 'installment'
           ? (Number(values.installment_weeks) as 4 | 6 | 8 | 12)
           : undefined,
-      discount_percent: Number(values.discount_percent) || 0,
-      transport_cost: Number(values.transport_cost) || 0,
-      notes: values.notes || '',
+      discount_percent: 0,
+      transport_cost: 0,
+      notes: '',
       items: values.items
         .filter((item) => item.product_id)
         .map((item) => ({
           product_id: item.product_id,
           quantity: Number(item.quantity) || 1,
+          serial_number: item.serial_number.trim(),
         })),
+      site_gps: {
+        latitude: siteGps.latitude,
+        longitude: siteGps.longitude,
+        captured_at: siteGps.captured_at,
+        locked: true as const,
+        out_of_area: siteGps.out_of_area,
+      },
+      site_photo_url: sitePhotoUrl,
     })
 
     if (!result.success) {
-      setError('items', { message: result.error })
+      setFormError(result.error)
       return
     }
+
+    // Keep geo + product locks across successful saves
+    const lock = readGeoLock()
+    const keepState = lock.locked ? lock.state : values.new_customer.state
+    const keepLga = lock.locked ? lock.lga : values.new_customer.lga
+    if (lock.locked) {
+      writeGeoLock({ locked: true, state: keepState, lga: keepLga })
+    }
+
+    const productLock = readProductLock()
+    const keepProductId = productLock.locked
+      ? productLock.product_id
+      : values.items[0]?.product_id || ''
+    const keepQty = productLock.locked
+      ? productLock.quantity
+      : Number(values.items[0]?.quantity) || 1
+    if (productLock.locked && keepProductId) {
+      writeProductLock({
+        locked: true,
+        product_id: keepProductId,
+        quantity: keepQty,
+      })
+    }
+
+    reset({
+      customer_mode: 'new',
+      customer_id: '',
+      new_customer: {
+        name: '',
+        email: '',
+        phone: '',
+        nin: '',
+        bvn: '',
+        address: '',
+        city: '',
+        state: keepState,
+        lga: keepLga,
+        business_type: BUSINESS_TYPES[0],
+      },
+      payment_type: 'full',
+      installment_weeks: 4,
+      discount_percent: 0,
+      transport_cost: 0,
+      notes: '',
+      items: [
+        {
+          product_id: productLock.locked ? keepProductId : '',
+          quantity: productLock.locked ? keepQty : 1,
+          serial_number: '',
+        },
+      ],
+    })
+    setDupPhone(emptyDup())
+    setDupNin(emptyDup())
+    setDupBvn(emptyDup())
+    setSiteGps(null)
+    setSitePhotoFile(null)
+    setSiteError(null)
 
     router.push(`/sales?created=${result.data.sale.id}&invoice=${result.data.invoice.id}`)
     router.refresh()
@@ -155,29 +797,255 @@ export function SaleForm({
       <Panel title="Customer & payment" description="Choose who is buying and how they will pay">
         <div className="space-y-5">
           <div>
-            <Label>Customer</Label>
-            <div className="mt-1.5">
-              <CustomerPicker
-                customers={customers}
-                value={customerId || ''}
-                onChange={(id) =>
-                  setValue('customer_id', id, { shouldValidate: true, shouldDirty: true })
-                }
-                error={errors.customer_id?.message}
-              />
+            <Label>Customer source</Label>
+            <div className="mt-1.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setValue('customer_mode', 'existing')}
+                className={cn(
+                  'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
+                  customerMode === 'existing'
+                    ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
+                    : 'border-border/80 hover:border-primary/40'
+                )}
+              >
+                <Users className="mt-0.5 size-5 text-primary" />
+                <div>
+                  <p className="font-medium">Existing customer</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Search and select from the list</p>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setValue('customer_mode', 'new')}
+                className={cn(
+                  'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
+                  customerMode === 'new'
+                    ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
+                    : 'border-border/80 hover:border-primary/40'
+                )}
+              >
+                <UserPlus className="mt-0.5 size-5 text-primary" />
+                <div>
+                  <p className="font-medium">New customer</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Add details here — phone, NIN & BVN checked for duplicates
+                  </p>
+                </div>
+              </button>
             </div>
-            <input type="hidden" {...register('customer_id')} />
+            <input type="hidden" {...register('customer_mode')} />
           </div>
+
+          {customerMode === 'existing' ? (
+            <div>
+              <Label>Customer</Label>
+              <div className="mt-1.5">
+                <CustomerPicker
+                  customers={customers}
+                  value={customerId || ''}
+                  onChange={(id) =>
+                    setValue('customer_id', id, { shouldValidate: true, shouldDirty: true })
+                  }
+                  error={errors.customer_id?.message}
+                />
+              </div>
+              <input type="hidden" {...register('customer_id')} />
+            </div>
+          ) : (
+            <div className="space-y-4 rounded-xl border border-border/70 bg-secondary/15 p-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <Label htmlFor="new_customer.name">Full name</Label>
+                  <Input
+                    id="new_customer.name"
+                    placeholder="Customer full name"
+                    {...register('new_customer.name')}
+                  />
+                  {errors.new_customer?.name && (
+                    <p className="mt-1 text-xs text-destructive">{errors.new_customer.name.message}</p>
+                  )}
+                </div>
+
+                <UniqueField
+                  field="phone"
+                  label="Phone"
+                  placeholder="07012345678"
+                  dup={dupPhone}
+                  value={phoneValue}
+                  error={errors.new_customer?.phone?.message}
+                  onChange={(next) => {
+                    setValue('new_customer.phone', next, { shouldDirty: true })
+                    clearFieldDup('phone')
+                  }}
+                  onSearch={() => void runDuplicateCheck('phone')}
+                />
+                <UniqueField
+                  field="nin"
+                  label="NIN"
+                  placeholder="11-digit NIN"
+                  dup={dupNin}
+                  value={ninValue}
+                  error={errors.new_customer?.nin?.message}
+                  onChange={(next) => {
+                    setValue('new_customer.nin', next, { shouldDirty: true })
+                    clearFieldDup('nin')
+                  }}
+                  onSearch={() => void runDuplicateCheck('nin')}
+                />
+                <UniqueField
+                  field="bvn"
+                  label="BVN"
+                  placeholder="11-digit BVN"
+                  dup={dupBvn}
+                  value={bvnValue}
+                  error={errors.new_customer?.bvn?.message}
+                  onChange={(next) => {
+                    setValue('new_customer.bvn', next, { shouldDirty: true })
+                    clearFieldDup('bvn')
+                  }}
+                  onSearch={() => void runDuplicateCheck('bvn')}
+                />
+
+                <div>
+                  <Label htmlFor="new_customer.email">Email (optional)</Label>
+                  <Input
+                    id="new_customer.email"
+                    type="email"
+                    placeholder="name@email.com"
+                    {...register('new_customer.email')}
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <Label htmlFor="new_customer.address">Address</Label>
+                  <Input
+                    id="new_customer.address"
+                    placeholder="Street address"
+                    {...register('new_customer.address')}
+                  />
+                  {errors.new_customer?.address && (
+                    <p className="mt-1 text-xs text-destructive">
+                      {errors.new_customer.address.message}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <Label htmlFor="new_customer.city">City</Label>
+                  <Input id="new_customer.city" placeholder="City" {...register('new_customer.city')} />
+                  {errors.new_customer?.city && (
+                    <p className="mt-1 text-xs text-destructive">{errors.new_customer.city.message}</p>
+                  )}
+                </div>
+
+                <div>
+                  <Label htmlFor="new_customer.business_type">Business / customer type</Label>
+                  <Select id="new_customer.business_type" {...register('new_customer.business_type')}>
+                    {BUSINESS_TYPES.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border/60 bg-background/60 p-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium">State & local government</p>
+                    <p className="text-xs text-muted-foreground">
+                      Lock these for queue entry — they stay set after each save until you unlock
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant={geoLocked ? 'default' : 'outline'}
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={toggleGeoLock}
+                  >
+                    {geoLocked ? (
+                      <>
+                        <Lock className="size-3.5" />
+                        Locked
+                      </>
+                    ) : (
+                      <>
+                        <Unlock className="size-3.5" />
+                        Lock location
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div>
+                    <Label>State</Label>
+                    <SearchableSelect
+                      id="new_customer.state"
+                      options={stateOptions}
+                      value={selectedState}
+                      disabled={geoLocked}
+                      onChange={(state) => {
+                        setValue('new_customer.state', state, {
+                          shouldValidate: true,
+                          shouldDirty: true,
+                        })
+                        setValue('new_customer.lga', '', { shouldDirty: true })
+                      }}
+                      placeholder="Search states…"
+                      emptyLabel="No state matches"
+                      error={errors.new_customer?.state?.message}
+                    />
+                    <input type="hidden" {...register('new_customer.state')} />
+                  </div>
+                  <div>
+                    <Label>Local government</Label>
+                    <SearchableSelect
+                      id="new_customer.lga"
+                      options={lgaOptions}
+                      value={selectedLga}
+                      disabled={geoLocked}
+                      onChange={(lga) => {
+                        setValue('new_customer.lga', lga, {
+                          shouldValidate: true,
+                          shouldDirty: true,
+                        })
+                      }}
+                      placeholder={selectedState ? 'Search LGA…' : 'Select a state first'}
+                      emptyLabel="No LGA matches"
+                      error={errors.new_customer?.lga?.message}
+                    />
+                    <input type="hidden" {...register('new_customer.lga')} />
+                  </div>
+                </div>
+                {geoLocked && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Location is locked to {selectedState}
+                    {selectedLga ? ` / ${selectedLga}` : ''}. Unlock to change.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
 
           <div>
             <Label>Payment type</Label>
             <div className="mt-1.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <button
                 type="button"
-                onClick={() => setValue('payment_type', 'full', { shouldValidate: true })}
+                onClick={() =>
+                  setValue('payment_type', 'full', {
+                    shouldValidate: true,
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  })
+                }
                 className={cn(
                   'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
-                  paymentType === 'full'
+                  !isInstallment
                     ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
                     : 'border-border/80 hover:border-primary/40'
                 )}
@@ -186,34 +1054,39 @@ export function SaleForm({
                 <div>
                   <p className="font-medium">Full payment</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    Customer pays the full invoice amount at once
+                    Paid in full — no outstanding balance on this sale
                   </p>
                 </div>
               </button>
 
               <button
                 type="button"
-                onClick={() => setValue('payment_type', 'installment', { shouldValidate: true })}
+                onClick={() =>
+                  setValue('payment_type', 'installment', {
+                    shouldValidate: true,
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  })
+                }
                 className={cn(
                   'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
-                  paymentType === 'installment'
+                  isInstallment
                     ? 'border-accent bg-accent/10 ring-2 ring-accent/20'
                     : 'border-border/80 hover:border-accent/40'
                 )}
               >
                 <CalendarClock className="mt-0.5 size-5 text-accent" />
                 <div>
-                  <p className="font-medium">Installment</p>
+                  <p className="font-medium">Installment / PAYGO</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     Spread payment across weekly timelines with reminders
                   </p>
                 </div>
               </button>
             </div>
-            <input type="hidden" {...register('payment_type')} />
           </div>
 
-          {paymentType === 'installment' && (
+          {isInstallment && (
             <div className="max-w-xs">
               <Label htmlFor="installment_weeks">Installment weeks</Label>
               <Select
@@ -236,29 +1109,56 @@ export function SaleForm({
 
       <Panel
         title="Products"
-        description="Stock is subtracted automatically when this sale is saved"
+        description="Lock the product for queue entry — serial still changes per sale"
         action={
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="gap-1.5"
-            onClick={() => append({ product_id: '', quantity: 1 })}
-          >
-            <Plus className="size-3.5" />
-            Add line
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant={productLocked ? 'default' : 'outline'}
+              size="sm"
+              className="gap-1.5"
+              onClick={toggleProductLock}
+            >
+              {productLocked ? (
+                <>
+                  <Lock className="size-3.5" />
+                  Product locked
+                </>
+              ) : (
+                <>
+                  <Unlock className="size-3.5" />
+                  Lock product
+                </>
+              )}
+            </Button>
+            {!productLocked && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => append({ product_id: '', quantity: 1, serial_number: '' })}
+              >
+                <Plus className="size-3.5" />
+                Add line
+              </Button>
+            )}
+          </div>
         }
       >
         <div className="space-y-3">
           {fields.map((field, index) => (
             <div
               key={field.id}
-              className="grid grid-cols-1 items-end gap-3 rounded-lg border border-border/60 bg-secondary/20 p-3 md:grid-cols-[1fr_120px_auto]"
+              className="grid grid-cols-1 items-end gap-3 rounded-lg border border-border/60 bg-secondary/20 p-3 md:grid-cols-[1fr_100px_1fr_auto]"
             >
               <div>
                 <Label htmlFor={`items.${index}.product_id`}>Product</Label>
-                <Select id={`items.${index}.product_id`} {...register(`items.${index}.product_id`)}>
+                <Select
+                  id={`items.${index}.product_id`}
+                  disabled={productLocked}
+                  {...register(`items.${index}.product_id`)}
+                >
                   <option value="">Select product…</option>
                   {inStockProducts.map((product) => (
                     <option key={product.id} value={product.id}>
@@ -272,24 +1172,61 @@ export function SaleForm({
                 <Label htmlFor={`items.${index}.quantity`}>Qty</Label>
                 <Input
                   id={`items.${index}.quantity`}
-                  type="number"
-                  min={1}
-                  {...register(`items.${index}.quantity`, { valueAsNumber: true })}
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  disabled={productLocked}
+                  {...register(`items.${index}.quantity`, {
+                    setValueAs: (v) => {
+                      const n = Number(digitsOnly(String(v ?? ''))) || 1
+                      return Math.max(1, n)
+                    },
+                    onChange: (e) => {
+                      e.target.value = digitsOnly(e.target.value)
+                    },
+                  })}
                 />
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="text-muted-foreground hover:text-destructive"
-                onClick={() => fields.length > 1 && remove(index)}
-                disabled={fields.length === 1}
-                aria-label="Remove line"
-              >
-                <Trash2 className="size-4" />
-              </Button>
+              <div>
+                <Label htmlFor={`items.${index}.serial_number`}>Serial number</Label>
+                <Input
+                  id={`items.${index}.serial_number`}
+                  placeholder="Device serial…"
+                  autoComplete="off"
+                  {...register(`items.${index}.serial_number`)}
+                />
+              </div>
+              {!productLocked ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground hover:text-destructive"
+                  onClick={() => fields.length > 1 && remove(index)}
+                  disabled={fields.length === 1}
+                  aria-label="Remove line"
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              ) : (
+                <div className="hidden md:block" />
+              )}
             </div>
           ))}
+          {productLocked && firstProductId && (
+            <p className="text-xs text-muted-foreground">
+              Product is locked
+              {products.find((p) => p.id === firstProductId)?.name
+                ? ` to ${products.find((p) => p.id === firstProductId)?.name}`
+                : ''}
+              . Unlock to change product or quantity.
+            </p>
+          )}
+          {!productLocked && (
+            <p className="text-xs text-muted-foreground">
+              For quantity greater than 1, enter one serial per unit separated by commas.
+            </p>
+          )}
           {errors.items && (
             <p className="text-xs text-destructive">
               {errors.items.message || 'Add at least one product line'}
@@ -298,47 +1235,18 @@ export function SaleForm({
         </div>
       </Panel>
 
-      <Panel title="Charges & notes" description="VAT (7.5%) is calculated automatically">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div>
-            <Label htmlFor="discount_percent">Discount (%)</Label>
-            <Input
-              id="discount_percent"
-              type="number"
-              min={0}
-              max={100}
-              step={0.5}
-              {...register('discount_percent', { valueAsNumber: true })}
-            />
-          </div>
-          <div>
-            <Label htmlFor="transport_cost">Transport cost (₦)</Label>
-            <Input
-              id="transport_cost"
-              type="number"
-              min={0}
-              step={1000}
-              {...register('transport_cost', { valueAsNumber: true })}
-            />
-          </div>
-          <div className="md:col-span-2">
-            <Label htmlFor="notes">Notes</Label>
-            <Textarea
-              id="notes"
-              placeholder="Optional notes for this sale…"
-              {...register('notes')}
-            />
-          </div>
-        </div>
-      </Panel>
+      <SiteVerificationPanel
+        gps={siteGps}
+        photoFile={sitePhotoFile}
+        onGpsChange={setSiteGps}
+        onPhotoChange={setSitePhotoFile}
+        error={siteError}
+      />
 
       <Panel title="Invoice preview" description="An invoice is created automatically when you save">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3">
           {[
             { label: 'Subtotal', value: formatCurrency(totals.subtotal) },
-            { label: 'Discount', value: formatCurrency(totals.discountAmount) },
-            { label: 'VAT (7.5%)', value: formatCurrency(totals.vat) },
-            { label: 'Transport', value: formatCurrency(totals.transport) },
             { label: 'Total', value: formatCurrency(totals.total), emphasize: true },
           ].map((row) => (
             <div key={row.label} className="rounded-lg bg-secondary/40 px-3 py-3">
@@ -357,16 +1265,30 @@ export function SaleForm({
           ))}
         </div>
         <p className="mt-4 text-sm text-muted-foreground">
-          Saving this sale will generate a matching invoice
-          {paymentType === 'installment'
-            ? ` and a ${installmentWeeks || 4}-week installment schedule with reminders.`
-            : ' with a single full-payment due date.'}{' '}
-          Product quantities are subtracted from inventory automatically.
+          {isInstallment ? (
+            <>
+              Saving creates an invoice and a {installmentWeeks || 4}-week PAYGO / installment
+              schedule with reminders. Product quantities are subtracted from inventory
+              automatically.
+            </>
+          ) : (
+            <>
+              Saving marks this sale paid in full — invoice complete with no outstanding balance and
+              no installment schedule. Product quantities are subtracted from inventory
+              automatically.
+            </>
+          )}
         </p>
       </Panel>
 
+      {formError && (
+        <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {formError}
+        </p>
+      )}
+
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={isSubmitting}>
+        <Button type="submit" disabled={isSubmitting || hasDuplicates}>
           Create sale & invoice
         </Button>
         <Button type="button" variant="outline" onClick={() => router.push('/sales')}>

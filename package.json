@@ -15,6 +15,8 @@
     "db:setup": "pnpm db:push && pnpm db:seed"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1112.0",
+    "@aws-sdk/s3-request-presigner": "^3.1112.0",
     "@base-ui/react": "^1.5.0",
     "@hookform/resolvers": "^5.5.7",
     "@serwist/next": "^9.5.12",
@@ -33,6 +35,7 @@
     "react-dom": "^19",
     "react-hook-form": "^7.83.0",
     "recharts": "^3.10.1",
+    "server-only": "^0.0.1",
     "serwist": "^9.5.12",
     "shadcn": "^4.8.0",
     "tailwind-merge": "^3.3.1",

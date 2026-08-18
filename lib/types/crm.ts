@@ -6,9 +6,18 @@ export interface Customer {
   name: string
   email: string
   phone: string
+  nin: string
+  bvn: string
   address: string
   city: string
   state: string
+  lga: string
+  latitude?: number | null
+  longitude?: number | null
+  gps_captured_at?: Date | null
+  gps_locked?: boolean
+  gps_out_of_area?: boolean
+  photo_url?: string
   business_type: string
   credit_limit: number
   total_purchases: number
@@ -53,6 +62,12 @@ export interface Sale {
   items: SaleItem[]
   profit: number
   notes: string
+  latitude?: number | null
+  longitude?: number | null
+  gps_captured_at?: Date | null
+  gps_locked?: boolean
+  gps_out_of_area?: boolean
+  site_photo_url?: string
 }
 
 export interface InvoiceItem {
@@ -187,9 +202,18 @@ export type CustomerInput = {
   name: string
   email: string
   phone: string
+  nin?: string
+  bvn?: string
   address: string
   city: string
   state: string
+  lga?: string
+  latitude?: number | null
+  longitude?: number | null
+  gps_captured_at?: Date | null
+  gps_locked?: boolean
+  gps_out_of_area?: boolean
+  photo_url?: string
   business_type: string
   credit_limit: number
 }
@@ -197,16 +221,28 @@ export type CustomerInput = {
 export type SaleLineInput = {
   product_id: string
   quantity: number
+  serial_number?: string
+}
+
+export type SaleSiteGpsInput = {
+  latitude: number
+  longitude: number
+  captured_at: string
+  locked: boolean
+  out_of_area: boolean
 }
 
 export type SaleInput = {
-  customer_id: string
+  customer_id?: string
+  new_customer?: CustomerInput
   payment_type: PaymentType
   installment_weeks?: number
   discount_percent: number
   transport_cost: number
   notes: string
   items: SaleLineInput[]
+  site_gps: SaleSiteGpsInput
+  site_photo_url: string
 }
 
 export type ProductInput = {

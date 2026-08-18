@@ -22,6 +22,7 @@ import {
   Receipt,
   Boxes,
   AlertCircle,
+  MessageSquare,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -85,6 +86,7 @@ const navGroups = [
       { name: 'Products', href: '/products', icon: Package },
       { name: 'Inventory', href: '/inventory', icon: Boxes },
       { name: 'Warranty', href: '/warranty', icon: Shield },
+      { name: 'Activations', href: '/activations', icon: MessageSquare },
     ],
   },
 ]

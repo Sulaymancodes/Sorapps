@@ -9,6 +9,7 @@ import { listProducts } from '@/lib/services/products'
 
 export default async function NewSalePage() {
   const [customers, products] = await Promise.all([listCustomers(), listProducts()])
+  const hasStock = products.some((p) => p.stock > 0)
 
   return (
     <PageShell>
@@ -24,24 +25,15 @@ export default async function NewSalePage() {
           </Link>
         }
       />
-      {customers.length === 0 || products.filter((p) => p.stock > 0).length === 0 ? (
+      {!hasStock ? (
         <div className="rounded-xl border border-border/70 bg-card p-6 text-sm">
           <p className="font-medium">Before you can create a sale</p>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
-            {customers.length === 0 && (
-              <li>
-                <Link href="/customers/new" className="text-primary hover:underline">
-                  Add at least one customer
-                </Link>
-              </li>
-            )}
-            {products.filter((p) => p.stock > 0).length === 0 && (
-              <li>
-                <Link href="/products/new" className="text-primary hover:underline">
-                  Add a product with stock
-                </Link>
-              </li>
-            )}
+            <li>
+              <Link href="/products/new" className="text-primary hover:underline">
+                Add a product with stock
+              </Link>
+            </li>
           </ul>
         </div>
       ) : null}

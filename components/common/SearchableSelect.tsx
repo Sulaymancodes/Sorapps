@@ -12,6 +12,7 @@ export function SearchableSelect({
   emptyLabel = 'No matches',
   error,
   id,
+  disabled = false,
 }: {
   options: readonly string[]
   value: string
@@ -20,6 +21,7 @@ export function SearchableSelect({
   emptyLabel?: string
   error?: string
   id?: string
+  disabled?: boolean
 }) {
   const listId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -87,30 +89,34 @@ export function SearchableSelect({
   }
 
   return (
-    <div ref={containerRef} className="relative">
+    <div ref={containerRef} className={cn('relative', disabled && 'pointer-events-none opacity-70')}>
       {selected && !open ? (
         <div className="flex h-10 items-center gap-2 rounded-md border border-input bg-background px-3">
           <p className="min-w-0 flex-1 truncate text-sm">{selected}</p>
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(true)
-              setQuery('')
-              requestAnimationFrame(() => inputRef.current?.focus())
-            }}
-            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Change selection"
-          >
-            <ChevronsUpDown className="size-4" />
-          </button>
-          <button
-            type="button"
-            onClick={clearSelection}
-            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Clear selection"
-          >
-            <X className="size-4" />
-          </button>
+          {!disabled && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(true)
+                  setQuery('')
+                  requestAnimationFrame(() => inputRef.current?.focus())
+                }}
+                className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Change selection"
+              >
+                <ChevronsUpDown className="size-4" />
+              </button>
+              <button
+                type="button"
+                onClick={clearSelection}
+                className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Clear selection"
+              >
+                <X className="size-4" />
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <div className="relative">
@@ -120,16 +126,20 @@ export function SearchableSelect({
             id={id}
             type="search"
             value={query}
+            disabled={disabled}
             onChange={(e) => {
               setQuery(e.target.value)
               setOpen(true)
             }}
-            onFocus={() => setOpen(true)}
+            onFocus={() => {
+              if (!disabled) setOpen(true)
+            }}
             onKeyDown={onKeyDown}
             placeholder={placeholder}
             className={cn(
               'flex h-10 w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-              error && 'border-destructive'
+              error && 'border-destructive',
+              disabled && 'cursor-not-allowed'
             )}
             aria-autocomplete="list"
             aria-controls={listId}
@@ -139,7 +149,7 @@ export function SearchableSelect({
         </div>
       )}
 
-      {open && (
+      {open && !disabled && (
         <div
           id={listId}
           role="listbox"

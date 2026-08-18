@@ -12,7 +12,7 @@ import {
   sales,
   warranties,
 } from '@/lib/db/schema'
-import { VAT_RATE } from '@/lib/constants/options'
+import { createCustomer } from '@/lib/services/customers'
 import type {
   Customer,
   Installment,
@@ -71,6 +71,12 @@ function mapSale(
     items,
     profit: row.profit,
     notes: row.notes,
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
+    gps_captured_at: row.gpsCapturedAt ?? null,
+    gps_locked: row.gpsLocked,
+    gps_out_of_area: row.gpsOutOfArea,
+    site_photo_url: row.sitePhotoUrl || '',
   }
 }
 
@@ -237,12 +243,40 @@ export async function createSale(
   input: SaleInput
 ): Promise<{ sale: Sale; invoice: Invoice; schedule: PaymentSchedule }> {
   if (!input.items.length) throw new Error('Add at least one product')
+  if (
+    !input.site_gps ||
+    !Number.isFinite(input.site_gps.latitude) ||
+    !Number.isFinite(input.site_gps.longitude)
+  ) {
+    throw new Error('Capture live GPS before saving this sale')
+  }
+  if (!input.site_gps.locked) {
+    throw new Error('GPS capture must be locked before saving')
+  }
+  if (!input.site_photo_url?.trim()) {
+    throw new Error('Upload a site photo before saving this sale')
+  }
+
+  let customerId = input.customer_id?.trim() || ''
+  if (!customerId && input.new_customer) {
+    const created = await createCustomer({
+      ...input.new_customer,
+      latitude: input.site_gps.latitude,
+      longitude: input.site_gps.longitude,
+      gps_captured_at: new Date(input.site_gps.captured_at),
+      gps_locked: true,
+      gps_out_of_area: input.site_gps.out_of_area,
+      photo_url: input.site_photo_url.trim(),
+    })
+    customerId = created.id
+  }
+  if (!customerId) throw new Error('Select or create a customer')
 
   return db.transaction(async (tx) => {
     const [customer] = await tx
       .select()
       .from(customers)
-      .where(eq(customers.id, input.customer_id))
+      .where(eq(customers.id, customerId))
       .limit(1)
     if (!customer) throw new Error('Customer not found')
 
@@ -284,7 +318,7 @@ export async function createSale(
     const discount_percent = Math.min(100, Math.max(0, input.discount_percent || 0))
     const discountAmount = (subtotal * discount_percent) / 100
     const afterDiscount = subtotal - discountAmount
-    const vat_amount = Math.round(afterDiscount * VAT_RATE)
+    const vat_amount = 0
     const transport_cost = Math.max(0, Math.round(input.transport_cost || 0))
     const total_amount = Math.round(afterDiscount + vat_amount + transport_cost)
     const cost = items.reduce((sum, item) => {
@@ -294,6 +328,7 @@ export async function createSale(
     const profit = total_amount - cost - transport_cost
 
     const payment_type = input.payment_type
+    const isFullyPaid = payment_type === 'full'
     const installment_weeks =
       payment_type === 'installment'
         ? input.installment_weeks && [4, 6, 8, 12].includes(input.installment_weeks)
@@ -334,18 +369,24 @@ export async function createSale(
       .insert(sales)
       .values({
         id: saleId,
-        customerId: input.customer_id,
+        customerId,
         date: now,
-        status: 'pending_payment',
+        status: isFullyPaid ? 'paid' : 'pending_payment',
         paymentType: payment_type,
         installmentWeeks: installment_weeks,
         totalAmount: total_amount,
-        amountPaid: 0,
+        amountPaid: isFullyPaid ? total_amount : 0,
         discountPercent: discount_percent,
         vatAmount: vat_amount,
         transportCost: transport_cost,
         profit,
         notes,
+        latitude: input.site_gps.latitude,
+        longitude: input.site_gps.longitude,
+        gpsCapturedAt: new Date(input.site_gps.captured_at),
+        gpsLocked: true,
+        gpsOutOfArea: Boolean(input.site_gps.out_of_area),
+        sitePhotoUrl: input.site_photo_url.trim(),
       })
       .returning()
 
@@ -366,12 +407,12 @@ export async function createSale(
         id: invoiceId,
         invoiceNumber,
         saleId,
-        customerId: input.customer_id,
+        customerId,
         issueDate: now,
-        dueDate: new Date(now.getTime() + weeks * 7 * 24 * 60 * 60 * 1000),
-        status: 'sent',
+        dueDate: isFullyPaid ? now : new Date(now.getTime() + weeks * 7 * 24 * 60 * 60 * 1000),
+        status: isFullyPaid ? 'paid' : 'sent',
         totalAmount: total_amount,
-        paidAmount: 0,
+        paidAmount: isFullyPaid ? total_amount : 0,
       })
       .returning()
 
@@ -391,7 +432,12 @@ export async function createSale(
     )
 
     const saleIndexLabel = saleId.replace(/\D/g, '').padStart(5, '0')
-    const installmentList = buildInstallments(total_amount, weeks, now, saleIndexLabel)
+    const installmentList = buildInstallments(total_amount, weeks, now, saleIndexLabel).map(
+      (inst) =>
+        isFullyPaid
+          ? { ...inst, status: 'paid' as const, paid_date: now, reminder: false }
+          : inst
+    )
 
     const [scheduleRow] = await tx
       .insert(paymentSchedules)
@@ -399,12 +445,12 @@ export async function createSale(
         id: scheduleId,
         saleId,
         invoiceId,
-        customerId: input.customer_id,
+        customerId,
         paymentType: payment_type,
         installmentWeeks: installment_weeks,
         totalAmount: total_amount,
-        paidAmount: 0,
-        nextDueDate: installmentList[0]?.due_date ?? null,
+        paidAmount: isFullyPaid ? total_amount : 0,
+        nextDueDate: isFullyPaid ? null : installmentList[0]?.due_date ?? null,
       })
       .returning()
 
@@ -415,6 +461,7 @@ export async function createSale(
         weekNumber: inst.week_number,
         amount: inst.amount,
         dueDate: inst.due_date,
+        paidDate: isFullyPaid ? now : null,
         status: inst.status,
         reminder: Boolean(inst.reminder),
       }))
@@ -450,29 +497,68 @@ export async function createSale(
       .update(customers)
       .set({
         totalPurchases: sql`${customers.totalPurchases} + ${total_amount}`,
-        outstandingBalance: sql`${customers.outstandingBalance} + ${total_amount}`,
+        outstandingBalance: isFullyPaid
+          ? sql`${customers.outstandingBalance}`
+          : sql`${customers.outstandingBalance} + ${total_amount}`,
       })
       .where(eq(customers.id, customer.id))
 
-    // One warranty per sold unit (serial registered later on Warranty page)
-    const existingWarranties = await tx.select({ id: warranties.id }).from(warranties)
+    // One warranty per sold unit — serial from the sale line when provided
+    const existingWarranties = await tx.select({ id: warranties.id, serialNumber: warranties.serialNumber }).from(warranties)
+    const usedSerials = new Set(
+      existingWarranties.map((w) => w.serialNumber.trim().toLowerCase()).filter(Boolean)
+    )
+
+    const parseLineSerials = (raw: string | undefined, qty: number): string[] => {
+      const parts = (raw || '')
+        .split(/[,\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      if (parts.length === 0) return Array.from({ length: qty }, () => '')
+      if (parts.length === 1 && qty === 1) return parts
+      if (parts.length === qty) return parts
+      if (parts.length === 1 && qty > 1) {
+        return [parts[0], ...Array.from({ length: qty - 1 }, () => '')]
+      }
+      throw new Error(
+        `Serial count must match quantity (${qty}). Separate multiple serials with commas.`
+      )
+    }
+
+    const incomingSerials: string[] = []
+    for (const line of input.items) {
+      const qty = Math.max(1, Math.floor(line.quantity))
+      incomingSerials.push(...parseLineSerials(line.serial_number, qty))
+    }
+    for (const serial of incomingSerials) {
+      if (!serial) continue
+      const key = serial.toLowerCase()
+      if (usedSerials.has(key)) {
+        throw new Error(`Serial number already registered: ${serial}`)
+      }
+      usedSerials.add(key)
+    }
+
     let wtyCounter = Math.max(
       0,
       ...existingWarranties.map((w) => Number(w.id.replace(/\D/g, '')) || 0)
     )
     const warrantyRows: (typeof warranties.$inferInsert)[] = []
+    let serialCursor = 0
     for (const item of items) {
       for (let unit = 0; unit < item.quantity; unit += 1) {
         wtyCounter += 1
         const startDate = now
         const expiryDate = new Date(startDate)
         expiryDate.setMonth(expiryDate.getMonth() + 24)
+        const serialNumber = incomingSerials[serialCursor] || ''
+        serialCursor += 1
         warrantyRows.push({
           id: `WTY${String(wtyCounter).padStart(5, '0')}`,
           saleId,
           productId: item.product_id,
-          customerId: input.customer_id,
-          serialNumber: '',
+          customerId,
+          serialNumber,
           warrantyPeriodMonths: 24,
           startDate,
           expiryDate,
@@ -506,11 +592,72 @@ export async function createSale(
           weekNumber: inst.week_number,
           amount: inst.amount,
           dueDate: inst.due_date,
-          paidDate: null,
+          paidDate: isFullyPaid ? now : null,
           status: inst.status,
           reminder: Boolean(inst.reminder),
         }))
       ),
     }
+  })
+}
+
+export async function deleteSale(id: string): Promise<{ deleted: boolean }> {
+  const saleId = id.trim()
+  if (!saleId) throw new Error('Sale id is required')
+
+  return db.transaction(async (tx) => {
+    const [sale] = await tx.select().from(sales).where(eq(sales.id, saleId)).limit(1)
+    if (!sale) throw new Error('Sale not found')
+
+    const items = await tx.select().from(saleItems).where(eq(saleItems.saleId, saleId))
+    const now = new Date()
+
+    const qtyByProduct = new Map<string, number>()
+    for (const item of items) {
+      qtyByProduct.set(item.productId, (qtyByProduct.get(item.productId) || 0) + item.quantity)
+    }
+
+    const existingMovements = await tx.select({ id: inventoryMovements.id }).from(inventoryMovements)
+    let movCounter = Math.max(
+      0,
+      ...existingMovements.map((m) => Number(m.id.replace(/\D/g, '')) || 0)
+    )
+
+    for (const [productId, quantity] of qtyByProduct) {
+      movCounter += 1
+      await tx.insert(inventoryMovements).values({
+        id: `INV_MOV${String(movCounter).padStart(6, '0')}`,
+        productId,
+        type: 'in',
+        quantity,
+        reference: `${saleId}-DELETE`,
+        date: now,
+        notes: `Restocked after deleting ${saleId}`,
+      })
+      await tx
+        .update(products)
+        .set({
+          stock: sql`${products.stock} + ${quantity}`,
+          updatedAt: now,
+        })
+        .where(eq(products.id, productId))
+    }
+
+    const unpaid = Math.max(0, sale.totalAmount - sale.amountPaid)
+    await tx
+      .update(customers)
+      .set({
+        totalPurchases: sql`GREATEST(0, ${customers.totalPurchases} - ${sale.totalAmount})`,
+        outstandingBalance: sql`GREATEST(0, ${customers.outstandingBalance} - ${unpaid})`,
+      })
+      .where(eq(customers.id, sale.customerId))
+
+    // Remove linked inventory outs for this sale (restock movement kept as audit)
+    await tx
+      .delete(inventoryMovements)
+      .where(eq(inventoryMovements.reference, saleId))
+
+    await tx.delete(sales).where(eq(sales.id, saleId))
+    return { deleted: true }
   })
 }

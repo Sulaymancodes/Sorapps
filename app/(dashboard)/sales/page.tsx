@@ -1,9 +1,11 @@
 import { Suspense } from 'react'
+import { requireSession } from '@/lib/auth-server'
 import { listCustomers } from '@/lib/services/customers'
 import { listPaymentSchedules, listSales } from '@/lib/services/sales'
 import SalesPage from './sales-page'
 
 export default async function SalesRoutePage() {
+  const session = await requireSession()
   const [sales, customers, schedules] = await Promise.all([
     listSales(),
     listCustomers(),
@@ -18,7 +20,12 @@ export default async function SalesRoutePage() {
         </div>
       }
     >
-      <SalesPage sales={sales} customers={customers} schedules={schedules} />
+      <SalesPage
+        sales={sales}
+        customers={customers}
+        schedules={schedules}
+        isAdmin={session.user.role === 'admin'}
+      />
     </Suspense>
   )
 }

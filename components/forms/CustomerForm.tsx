@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/select'
 import { Panel } from '@/components/common/Panel'
 import { SearchableSelect } from '@/components/common/SearchableSelect'
 import { BUSINESS_TYPES, NIGERIAN_STATES } from '@/lib/constants/options'
+import { getLgasForState } from '@/lib/constants/lgas'
 import {
   createCustomerAction,
   updateCustomerAction,
@@ -39,15 +40,19 @@ export function CustomerForm({ customer, mode = 'create' }: CustomerFormProps) {
       name: customer?.name || '',
       email: customer?.email || '',
       phone: customer?.phone || '',
+      nin: customer?.nin || '',
+      bvn: customer?.bvn || '',
       address: customer?.address || '',
       city: customer?.city || '',
       state: customer?.state || '',
+      lga: customer?.lga || '',
       business_type: customer?.business_type || BUSINESS_TYPES[0],
       credit_limit: customer?.credit_limit || 500000,
     },
   })
 
   const selectedState = useWatch({ control, name: 'state' })
+  const selectedLga = useWatch({ control, name: 'lga' })
 
   const stateOptions = (() => {
     if (selectedState && !(NIGERIAN_STATES as readonly string[]).includes(selectedState)) {
@@ -56,13 +61,15 @@ export function CustomerForm({ customer, mode = 'create' }: CustomerFormProps) {
     return NIGERIAN_STATES as unknown as string[]
   })()
 
+  const lgaOptions = useMemo(() => getLgasForState(selectedState || ''), [selectedState])
+
   const onSubmit = async (values: CustomerFormValues) => {
     setFormError(null)
     if (!values.name.trim() || values.name.trim().length < 2) {
       setError('name', { message: 'Enter the customer name' })
       return
     }
-    if (!values.email.includes('@')) {
+    if (values.email?.trim() && !values.email.includes('@')) {
       setError('email', { message: 'Enter a valid email' })
       return
     }
@@ -90,10 +97,13 @@ export function CustomerForm({ customer, mode = 'create' }: CustomerFormProps) {
     const payload: CustomerInput = {
       ...values,
       name: values.name.trim(),
-      email: values.email.trim(),
+      email: values.email?.trim() || '',
       phone: values.phone.trim(),
+      nin: values.nin?.trim() || '',
+      bvn: values.bvn?.trim() || '',
       address: values.address.trim(),
       city: values.city.trim(),
+      lga: values.lga?.trim() || '',
       credit_limit: Number(values.credit_limit) || 0,
     }
 
@@ -126,15 +136,66 @@ export function CustomerForm({ customer, mode = 'create' }: CustomerFormProps) {
           </div>
 
           <div>
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="email">Email (optional)</Label>
             <Input id="email" type="email" placeholder="name@company.com" {...register('email')} />
             {errors.email && <p className="mt-1 text-xs text-destructive">{errors.email.message}</p>}
           </div>
 
           <div>
             <Label htmlFor="phone">Phone</Label>
-            <Input id="phone" placeholder="+2348012345678" {...register('phone')} />
+            <Input
+              id="phone"
+              type="tel"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={13}
+              placeholder="07012345678"
+              {...register('phone', {
+                onChange: (e) => {
+                  const digits = e.target.value.replace(/\D/g, '')
+                  const limit = digits.startsWith('234') ? 13 : 11
+                  e.target.value = digits.slice(0, limit)
+                  setValue('phone', e.target.value, { shouldDirty: true })
+                },
+              })}
+            />
             {errors.phone && <p className="mt-1 text-xs text-destructive">{errors.phone.message}</p>}
+          </div>
+
+          <div>
+            <Label htmlFor="nin">NIN</Label>
+            <Input
+              id="nin"
+              type="tel"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={11}
+              placeholder="11-digit NIN"
+              {...register('nin', {
+                onChange: (e) => {
+                  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 11)
+                  setValue('nin', e.target.value, { shouldDirty: true })
+                },
+              })}
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="bvn">BVN</Label>
+            <Input
+              id="bvn"
+              type="tel"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={11}
+              placeholder="11-digit BVN"
+              {...register('bvn', {
+                onChange: (e) => {
+                  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 11)
+                  setValue('bvn', e.target.value, { shouldDirty: true })
+                },
+              })}
+            />
           </div>
 
           <div className="md:col-span-2">
@@ -157,14 +218,28 @@ export function CustomerForm({ customer, mode = 'create' }: CustomerFormProps) {
               id="state"
               options={stateOptions}
               value={selectedState || ''}
-              onChange={(state) =>
+              onChange={(state) => {
                 setValue('state', state, { shouldValidate: true, shouldDirty: true })
-              }
+                setValue('lga', '', { shouldDirty: true })
+              }}
               placeholder="Search Nigerian states…"
               emptyLabel="No state matches your search"
               error={errors.state?.message}
             />
             <input type="hidden" {...register('state')} />
+          </div>
+
+          <div>
+            <Label htmlFor="lga">Local government</Label>
+            <SearchableSelect
+              id="lga"
+              options={lgaOptions}
+              value={selectedLga || ''}
+              onChange={(lga) => setValue('lga', lga, { shouldValidate: true, shouldDirty: true })}
+              placeholder={selectedState ? 'Search LGA…' : 'Select a state first'}
+              emptyLabel="No LGA matches"
+            />
+            <input type="hidden" {...register('lga')} />
           </div>
 
           <div>
