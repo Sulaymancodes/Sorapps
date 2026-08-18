@@ -33,3 +33,9 @@ data/*.db-*
 # Accidental local Postgres/Neon artifacts (may contain credentials in path)
 postgresql:/
 postgresql:
+
+# Serwist / PWA generated service worker
+public/sw.js
+public/sw.js.map
+public/swe-worker*
+
