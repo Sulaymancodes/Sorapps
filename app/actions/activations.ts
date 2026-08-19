@@ -21,6 +21,8 @@ const sendSchema = z.object({
   device_serial: z.string().optional(),
   phone: z.string().optional(),
   validity_days: z.coerce.number().int().min(1).max(365).optional(),
+  amount_paid: z.coerce.number().min(0).optional(),
+  expected_amount: z.coerce.number().min(0).optional(),
 })
 
 export async function listActivationsAction(): Promise<ActionResult<ActivationRecord[]>> {

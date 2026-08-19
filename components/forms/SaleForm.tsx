@@ -23,11 +23,18 @@ import { SearchableSelect } from '@/components/common/SearchableSelect'
 import { CustomerPicker } from '@/components/forms/CustomerPicker'
 import { SiteVerificationPanel } from '@/components/forms/SiteVerificationPanel'
 import { BUSINESS_TYPES, INSTALLMENT_WEEK_OPTIONS, NIGERIAN_STATES } from '@/lib/constants/options'
+import {
+  addLocalDays,
+  parseDateInput,
+  previewInstallmentPlan,
+  startOfLocalDay,
+  toDateInputValue,
+} from '@/lib/paygo/schedule'
 import { getLgasForState } from '@/lib/constants/lgas'
 import { createSaleAction } from '@/app/actions/sales'
 import { checkCustomerDuplicateAction } from '@/app/actions/customers'
 import { createSitePhotoUploadUrlAction } from '@/app/actions/uploads'
-import { formatCurrency } from '@/lib/utils/formatting'
+import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import { cn } from '@/lib/utils'
 import type { Customer, PaymentType, Product, SaleSiteGpsInput } from '@/lib/types/crm'
 
@@ -121,7 +128,9 @@ type SaleFormValues = {
     business_type: string
   }
   payment_type: PaymentType
-  installment_weeks: number
+  payment_method: 'bank_transfer' | 'cash' | 'cheque' | 'card'
+  installment_interval_days: number
+  plan_end_date: string
   discount_percent: number
   transport_cost: number
   notes: string
@@ -306,7 +315,7 @@ export function SaleForm({
     formState: { errors, isSubmitting },
   } = useForm<SaleFormValues>({
     defaultValues: {
-      customer_mode: customers.length > 0 ? 'existing' : 'new',
+      customer_mode: 'new',
       customer_id: '',
       new_customer: {
         name: '',
@@ -321,7 +330,9 @@ export function SaleForm({
         business_type: BUSINESS_TYPES[0],
       },
       payment_type: 'full',
-      installment_weeks: 4,
+      payment_method: 'cash',
+      installment_interval_days: 7,
+      plan_end_date: toDateInputValue(addLocalDays(startOfLocalDay(new Date()), 28)),
       discount_percent: 0,
       transport_cost: 0,
       notes: '',
@@ -331,7 +342,8 @@ export function SaleForm({
 
   const { fields, append, remove } = useFieldArray({ control, name: 'items' })
   const paymentType = useWatch({ control, name: 'payment_type' })
-  const installmentWeeks = useWatch({ control, name: 'installment_weeks' })
+  const installmentIntervalDays = useWatch({ control, name: 'installment_interval_days' })
+  const planEndDate = useWatch({ control, name: 'plan_end_date' })
   const isInstallment = paymentType === 'installment'
   const customerMode = useWatch({ control, name: 'customer_mode' })
   const customerId = useWatch({ control, name: 'customer_id' })
@@ -386,6 +398,29 @@ export function SaleForm({
     }, 0)
     return { subtotal, total: Math.round(subtotal) }
   }, [watchedItems, products])
+
+  const planPreview = useMemo(() => {
+    if (!isInstallment) return null
+    return previewInstallmentPlan({
+      total: totals.total,
+      endDateIso: planEndDate || '',
+      intervalDays: Number(installmentIntervalDays) || 7,
+    })
+  }, [isInstallment, totals.total, planEndDate, installmentIntervalDays])
+
+  const minPlanEndDate = toDateInputValue(addLocalDays(startOfLocalDay(new Date()), 1))
+
+  function applyWeekPreset(weeks: number) {
+    const end = addLocalDays(startOfLocalDay(new Date()), weeks * 7)
+    setValue('plan_end_date', toDateInputValue(end), {
+      shouldValidate: true,
+      shouldDirty: true,
+    })
+    setValue('installment_interval_days', 7, {
+      shouldValidate: true,
+      shouldDirty: true,
+    })
+  }
 
   const clearFieldError = useCallback(
     (field: DuplicateField) => {
@@ -617,9 +652,24 @@ export function SaleForm({
       setError('items', { message: 'Add at least one product line' })
       return
     }
-    if (values.payment_type === 'installment' && !values.installment_weeks) {
-      setError('installment_weeks', { message: 'Choose how many weeks' })
-      return
+    if (values.payment_type === 'installment') {
+      const interval = Math.round(Number(values.installment_interval_days))
+      if (!Number.isFinite(interval) || interval < 1 || interval > 365) {
+        setError('installment_interval_days', {
+          message: 'Enter payment interval in days (1–365)',
+        })
+        return
+      }
+      if (!values.plan_end_date) {
+        setError('plan_end_date', { message: 'Choose a plan end date' })
+        return
+      }
+      const end = parseDateInput(values.plan_end_date)
+      const start = startOfLocalDay(new Date())
+      if (Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+        setError('plan_end_date', { message: 'End date must be after today' })
+        return
+      }
     }
 
     const qtyByProduct = new Map<string, number>()
@@ -701,10 +751,13 @@ export function SaleForm({
             }
           : undefined,
       payment_type: values.payment_type,
-      installment_weeks:
+      payment_method: values.payment_method,
+      installment_interval_days:
         values.payment_type === 'installment'
-          ? (Number(values.installment_weeks) as 4 | 6 | 8 | 12)
+          ? Math.round(Number(values.installment_interval_days))
           : undefined,
+      plan_end_date:
+        values.payment_type === 'installment' ? values.plan_end_date : undefined,
       discount_percent: 0,
       transport_cost: 0,
       notes: '',
@@ -769,7 +822,9 @@ export function SaleForm({
         business_type: BUSINESS_TYPES[0],
       },
       payment_type: 'full',
-      installment_weeks: 4,
+      payment_method: 'cash',
+      installment_interval_days: 7,
+      plan_end_date: toDateInputValue(addLocalDays(startOfLocalDay(new Date()), 28)),
       discount_percent: 0,
       transport_cost: 0,
       notes: '',
@@ -801,22 +856,6 @@ export function SaleForm({
             <div className="mt-1.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <button
                 type="button"
-                onClick={() => setValue('customer_mode', 'existing')}
-                className={cn(
-                  'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
-                  customerMode === 'existing'
-                    ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
-                    : 'border-border/80 hover:border-primary/40'
-                )}
-              >
-                <Users className="mt-0.5 size-5 text-primary" />
-                <div>
-                  <p className="font-medium">Existing customer</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Search and select from the list</p>
-                </div>
-              </button>
-              <button
-                type="button"
                 onClick={() => setValue('customer_mode', 'new')}
                 className={cn(
                   'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
@@ -831,6 +870,22 @@ export function SaleForm({
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     Add details here — phone, NIN & BVN checked for duplicates
                   </p>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setValue('customer_mode', 'existing')}
+                className={cn(
+                  'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
+                  customerMode === 'existing'
+                    ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
+                    : 'border-border/80 hover:border-primary/40'
+                )}
+              >
+                <Users className="mt-0.5 size-5 text-primary" />
+                <div>
+                  <p className="font-medium">Existing customer</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Search and select from the list</p>
                 </div>
               </button>
             </div>
@@ -1079,28 +1134,96 @@ export function SaleForm({
                 <div>
                   <p className="font-medium">Installment / PAYGO</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    Spread payment across weekly timelines with reminders
+                    Pick end date and how often (every 7 / 14 / 30 days)
                   </p>
                 </div>
               </button>
             </div>
           </div>
 
+          <div>
+            <Label htmlFor="payment_method">Payment method</Label>
+            <Select id="payment_method" className="mt-1.5" {...register('payment_method')}>
+              <option value="cash">Cash</option>
+              <option value="bank_transfer">Bank transfer</option>
+              <option value="card">Card</option>
+              <option value="cheque">Cheque</option>
+            </Select>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {isInstallment
+                ? 'Preferred collection method for this PAYGO plan'
+                : 'How this full payment was received'}
+            </p>
+          </div>
+
           {isInstallment && (
-            <div className="max-w-xs">
-              <Label htmlFor="installment_weeks">Installment weeks</Label>
-              <Select
-                id="installment_weeks"
-                {...register('installment_weeks', { valueAsNumber: true })}
-              >
-                {INSTALLMENT_WEEK_OPTIONS.map((weeks) => (
-                  <option key={weeks} value={weeks}>
-                    {weeks} weeks
-                  </option>
-                ))}
-              </Select>
-              {errors.installment_weeks && (
-                <p className="mt-1 text-xs text-destructive">{errors.installment_weeks.message}</p>
+            <div className="space-y-4 rounded-xl border border-border/70 bg-secondary/20 p-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <Label htmlFor="plan_end_date">Plan end date</Label>
+                  <Input
+                    id="plan_end_date"
+                    type="date"
+                    min={minPlanEndDate}
+                    {...register('plan_end_date')}
+                    className="mt-1.5"
+                  />
+                  {errors.plan_end_date && (
+                    <p className="mt-1 text-xs text-destructive">{errors.plan_end_date.message}</p>
+                  )}
+                </div>
+                <div>
+                  <Label htmlFor="installment_interval_days">Payment every</Label>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <Input
+                      id="installment_interval_days"
+                      type="number"
+                      min={1}
+                      max={365}
+                      step={1}
+                      inputMode="numeric"
+                      {...register('installment_interval_days', { valueAsNumber: true })}
+                      className="max-w-[140px]"
+                    />
+                    <span className="text-sm text-muted-foreground">days</span>
+                  </div>
+                  {errors.installment_interval_days && (
+                    <p className="mt-1 text-xs text-destructive">
+                      {errors.installment_interval_days.message}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Quick end-date presets
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {INSTALLMENT_WEEK_OPTIONS.map((weeks) => (
+                    <button
+                      key={weeks}
+                      type="button"
+                      onClick={() => applyWeekPreset(weeks)}
+                      className="rounded-lg border border-border/80 bg-background px-3 py-1.5 text-xs font-medium hover:border-accent/50"
+                    >
+                      {weeks} weeks
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {planPreview && (
+                <div className="rounded-lg border border-border/60 bg-background px-3 py-2 text-sm">
+                  <p className="font-medium">
+                    {planPreview.count} payment{planPreview.count === 1 ? '' : 's'} ·{' '}
+                    {formatCurrency(planPreview.amount)} each
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    First due {formatDate(planPreview.first_due)} · Last due{' '}
+                    {formatDate(planPreview.last_due)}
+                  </p>
+                </div>
               )}
             </div>
           )}
@@ -1267,9 +1390,11 @@ export function SaleForm({
         <p className="mt-4 text-sm text-muted-foreground">
           {isInstallment ? (
             <>
-              Saving creates an invoice and a {installmentWeeks || 4}-week PAYGO / installment
-              schedule with reminders. Product quantities are subtracted from inventory
-              automatically.
+              Saving creates an invoice and a PAYGO schedule
+              {planPreview
+                ? ` of ${planPreview.count} payments every ${installmentIntervalDays || 7} days`
+                : ''}
+              . Product quantities are subtracted from inventory automatically.
             </>
           ) : (
             <>

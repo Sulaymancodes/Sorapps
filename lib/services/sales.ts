@@ -10,13 +10,15 @@ import {
   products,
   saleItems,
   sales,
+  payments,
   warranties,
 } from '@/lib/db/schema'
-import { createCustomer } from '@/lib/services/customers'
+import { createCustomer, getCustomer } from '@/lib/services/customers'
 import type {
   Customer,
   Installment,
   Invoice,
+  InvoiceDetail,
   PaymentReminder,
   PaymentSchedule,
   PaymentType,
@@ -26,29 +28,28 @@ import type {
   SaleStatus,
 } from '@/lib/types/crm'
 import { nextId } from '@/lib/utils/ids'
+import {
+  addLocalDays,
+  buildInstallmentsByInterval,
+  isValidIntervalDays,
+  parseDateInput,
+  startOfLocalDay,
+} from '@/lib/paygo/schedule'
 
+/** @deprecated Prefer buildInstallmentsByInterval — kept for full-payment single installment */
 function buildInstallments(
   total: number,
   weeks: number,
   startDate: Date,
   saleIndexLabel: string
 ): Installment[] {
-  const base = Math.floor(total / weeks)
-  const remainder = total - base * weeks
-
-  return Array.from({ length: weeks }, (_, weekIdx) => {
-    const week_number = weekIdx + 1
-    const amount = weekIdx === weeks - 1 ? base + remainder : base
-    const due_date = new Date(startDate.getTime() + weekIdx * 7 * 24 * 60 * 60 * 1000)
-
-    return {
-      id: `INST${saleIndexLabel}-W${String(week_number).padStart(2, '0')}`,
-      week_number,
-      amount,
-      due_date,
-      status: 'pending' as const,
-      reminder: true,
-    }
+  const end = addLocalDays(startOfLocalDay(startDate), Math.max(0, (weeks - 1) * 7))
+  return buildInstallmentsByInterval({
+    total,
+    startDate,
+    endDate: end,
+    intervalDays: 7,
+    saleIndexLabel,
   })
 }
 
@@ -62,7 +63,10 @@ function mapSale(
     date: row.date,
     status: row.status as SaleStatus,
     payment_type: row.paymentType as PaymentType,
+    payment_method: (row.paymentMethod || 'cash') as Sale['payment_method'],
     installment_weeks: row.installmentWeeks ?? undefined,
+    installment_interval_days: row.installmentIntervalDays ?? undefined,
+    plan_end_date: row.planEndDate ?? undefined,
     total_amount: row.totalAmount,
     amount_paid: row.amountPaid,
     discount_percent: row.discountPercent,
@@ -109,6 +113,8 @@ function mapSchedule(
     customer_id: row.customerId,
     payment_type: row.paymentType as PaymentType,
     installment_weeks: row.installmentWeeks ?? undefined,
+    installment_interval_days: row.installmentIntervalDays ?? undefined,
+    plan_end_date: row.planEndDate ?? undefined,
     total_amount: row.totalAmount,
     paid_amount: row.paidAmount,
     next_due_date: row.nextDueDate ?? undefined,
@@ -116,6 +122,7 @@ function mapSchedule(
       id: inst.id,
       week_number: inst.weekNumber,
       amount: inst.amount,
+      paid_amount: inst.paidAmount,
       due_date: inst.dueDate,
       paid_date: inst.paidDate ?? undefined,
       status: inst.status as Installment['status'],
@@ -195,6 +202,64 @@ export async function listInvoices(): Promise<Invoice[]> {
   }
 
   return invoiceRows.map((row) => mapInvoice(row, itemsByInvoice.get(row.id) ?? []))
+}
+
+export type { InvoiceDetail }
+
+export async function getInvoiceDetail(idOrNumber: string): Promise<InvoiceDetail | null> {
+  const key = idOrNumber.trim()
+  if (!key) return null
+
+  const [byId] = await db.select().from(invoices).where(eq(invoices.id, key)).limit(1)
+  const [byNumber] = byId
+    ? [byId]
+    : await db.select().from(invoices).where(eq(invoices.invoiceNumber, key)).limit(1)
+  const invoiceRow = byNumber
+  if (!invoiceRow) return null
+
+  const [itemRows, customer, [saleRow], paymentRows] = await Promise.all([
+    db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceRow.id)),
+    getCustomer(invoiceRow.customerId),
+    db.select().from(sales).where(eq(sales.id, invoiceRow.saleId)).limit(1),
+    db
+      .select()
+      .from(payments)
+      .where(eq(payments.invoiceId, invoiceRow.id))
+      .orderBy(desc(payments.date)),
+  ])
+
+  if (!customer || !saleRow) return null
+
+  const invoice = mapInvoice(
+    invoiceRow,
+    itemRows.map((item) => ({
+      product_id: item.productId,
+      description: item.description,
+      quantity: item.quantity,
+      unit_price: item.unitPrice,
+      total: item.total,
+    }))
+  )
+
+  return {
+    invoice,
+    customer,
+    sale: {
+      id: saleRow.id,
+      payment_type: saleRow.paymentType as PaymentType,
+      payment_method: (saleRow.paymentMethod || 'cash') as Sale['payment_method'],
+      status: saleRow.status as SaleStatus,
+      notes: saleRow.notes,
+    },
+    payments: paymentRows.map((p) => ({
+      id: p.id,
+      amount: p.amount,
+      date: p.date,
+      method: p.method,
+      reference: p.reference,
+      status: p.status,
+    })),
+  }
 }
 
 export async function listPaymentReminders(
@@ -328,13 +393,34 @@ export async function createSale(
     const profit = total_amount - cost - transport_cost
 
     const payment_type = input.payment_type
+    const payment_method = input.payment_method || 'cash'
     const isFullyPaid = payment_type === 'full'
-    const installment_weeks =
-      payment_type === 'installment'
-        ? input.installment_weeks && [4, 6, 8, 12].includes(input.installment_weeks)
-          ? input.installment_weeks
-          : 4
-        : null
+    const now = new Date()
+    const startDay = startOfLocalDay(now)
+
+    let installment_interval_days: number | null = null
+    let plan_end_date: Date | null = null
+    let installment_weeks: number | null = null
+
+    if (payment_type === 'installment') {
+      const interval = Math.round(Number(input.installment_interval_days))
+      if (!isValidIntervalDays(interval)) {
+        throw new Error('Payment interval must be a whole number of days between 1 and 365')
+      }
+      installment_interval_days = interval
+
+      if (!input.plan_end_date?.trim()) {
+        throw new Error('Choose a plan end date')
+      }
+      const parsedEnd = parseDateInput(input.plan_end_date)
+      if (Number.isNaN(parsedEnd.getTime())) {
+        throw new Error('Invalid plan end date')
+      }
+      plan_end_date = parsedEnd
+
+      const spanDays = Math.round((plan_end_date.getTime() - startDay.getTime()) / 86400000)
+      installment_weeks = Math.max(1, Math.ceil(spanDays / 7))
+    }
 
     const existingSales = await tx.select({ id: sales.id }).from(sales)
     const existingInvoices = await tx.select({ id: invoices.id }).from(invoices)
@@ -358,12 +444,12 @@ export async function createSale(
       existingSchedules.map((s) => s.id),
       6
     )
-    const now = new Date()
-    const weeks = payment_type === 'full' ? 1 : installment_weeks || 4
     const invoiceNumber = `INV-${now.getFullYear()}-${invoiceId.replace(/\D/g, '').padStart(5, '0')}`
     const notes =
       input.notes.trim() ||
-      `${payment_type === 'full' ? 'Full payment' : `${installment_weeks}-week installment`} — ${customer.businessType}`
+      (payment_type === 'full'
+        ? `Full payment — ${customer.businessType}`
+        : `PAYGO every ${installment_interval_days} days through ${plan_end_date!.toLocaleDateString('en-NG')} — ${customer.businessType}`)
 
     const [saleRow] = await tx
       .insert(sales)
@@ -373,7 +459,10 @@ export async function createSale(
         date: now,
         status: isFullyPaid ? 'paid' : 'pending_payment',
         paymentType: payment_type,
+        paymentMethod: payment_method,
         installmentWeeks: installment_weeks,
+        installmentIntervalDays: installment_interval_days,
+        planEndDate: plan_end_date,
         totalAmount: total_amount,
         amountPaid: isFullyPaid ? total_amount : 0,
         discountPercent: discount_percent,
@@ -401,6 +490,25 @@ export async function createSale(
       }))
     )
 
+    const saleIndexLabel = saleId.replace(/\D/g, '').padStart(5, '0')
+    const installmentList = (
+      isFullyPaid
+        ? buildInstallments(total_amount, 1, now, saleIndexLabel)
+        : buildInstallmentsByInterval({
+            total: total_amount,
+            startDate: startDay,
+            endDate: plan_end_date!,
+            intervalDays: installment_interval_days!,
+            saleIndexLabel,
+          })
+    ).map((inst) =>
+      isFullyPaid
+        ? { ...inst, status: 'paid' as const, paid_date: now, reminder: false }
+        : inst
+    )
+
+    const lastDue = installmentList[installmentList.length - 1]?.due_date ?? now
+
     const [invoiceRow] = await tx
       .insert(invoices)
       .values({
@@ -409,7 +517,7 @@ export async function createSale(
         saleId,
         customerId,
         issueDate: now,
-        dueDate: isFullyPaid ? now : new Date(now.getTime() + weeks * 7 * 24 * 60 * 60 * 1000),
+        dueDate: isFullyPaid ? now : lastDue,
         status: isFullyPaid ? 'paid' : 'sent',
         totalAmount: total_amount,
         paidAmount: isFullyPaid ? total_amount : 0,
@@ -431,14 +539,6 @@ export async function createSale(
       })
     )
 
-    const saleIndexLabel = saleId.replace(/\D/g, '').padStart(5, '0')
-    const installmentList = buildInstallments(total_amount, weeks, now, saleIndexLabel).map(
-      (inst) =>
-        isFullyPaid
-          ? { ...inst, status: 'paid' as const, paid_date: now, reminder: false }
-          : inst
-    )
-
     const [scheduleRow] = await tx
       .insert(paymentSchedules)
       .values({
@@ -448,6 +548,8 @@ export async function createSale(
         customerId,
         paymentType: payment_type,
         installmentWeeks: installment_weeks,
+        installmentIntervalDays: installment_interval_days,
+        planEndDate: plan_end_date,
         totalAmount: total_amount,
         paidAmount: isFullyPaid ? total_amount : 0,
         nextDueDate: isFullyPaid ? null : installmentList[0]?.due_date ?? null,
@@ -460,12 +562,42 @@ export async function createSale(
         scheduleId,
         weekNumber: inst.week_number,
         amount: inst.amount,
+        paidAmount: isFullyPaid ? inst.amount : 0,
         dueDate: inst.due_date,
         paidDate: isFullyPaid ? now : null,
         status: inst.status,
         reminder: Boolean(inst.reminder),
       }))
     )
+
+    if (isFullyPaid) {
+      const existingPaymentIds = await tx.select({ id: payments.id }).from(payments)
+      const paymentId = nextId(
+        'PAY',
+        existingPaymentIds.map((r) => r.id),
+        6
+      )
+      const primaryInst = installmentList[0]
+      await tx.insert(payments).values({
+        id: paymentId,
+        invoiceId,
+        saleId,
+        customerId,
+        scheduleId,
+        installmentId: primaryInst?.id ?? null,
+        amount: total_amount,
+        date: now,
+        method: payment_method,
+        reference: paymentId,
+        bank: '',
+        status: 'success',
+        paymentType: payment_type,
+        weekNumber: primaryInst?.week_number ?? 1,
+        isPartial: false,
+        expectedAmount: total_amount,
+        notes: 'Recorded at sale creation',
+      })
+    }
 
     let movCounter = Math.max(
       0,
@@ -591,10 +723,13 @@ export async function createSale(
           scheduleId,
           weekNumber: inst.week_number,
           amount: inst.amount,
+          paidAmount: isFullyPaid ? inst.amount : 0,
           dueDate: inst.due_date,
           paidDate: isFullyPaid ? now : null,
           status: inst.status,
           reminder: Boolean(inst.reminder),
+          reminderSmsSentAt: null,
+          overdueSmsSentAt: null,
         }))
       ),
     }

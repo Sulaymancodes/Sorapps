@@ -25,7 +25,10 @@ const saleSchema = z
     customer_id: z.string().optional(),
     new_customer: customerInputSchema.optional(),
     payment_type: z.enum(['full', 'installment']),
-    installment_weeks: z.union([z.literal(4), z.literal(6), z.literal(8), z.literal(12)]).optional(),
+    payment_method: z.enum(['bank_transfer', 'cash', 'cheque', 'card']).default('cash'),
+    installment_weeks: z.coerce.number().int().positive().optional(),
+    installment_interval_days: z.coerce.number().int().min(1).max(365).optional(),
+    plan_end_date: z.string().optional(),
     discount_percent: z.coerce.number().min(0).max(100),
     transport_cost: z.coerce.number().min(0),
     notes: z.string(),
@@ -51,6 +54,15 @@ const saleSchema = z
     message: 'Select or create a customer',
     path: ['customer_id'],
   })
+  .refine(
+    (data) =>
+      data.payment_type !== 'installment' ||
+      (data.installment_interval_days != null && Boolean(data.plan_end_date?.trim())),
+    {
+      message: 'Choose payment interval and plan end date for installment sales',
+      path: ['plan_end_date'],
+    }
+  )
 
 export type ActionResult<T = void> =
   | { success: true; data: T }

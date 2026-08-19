@@ -10,6 +10,7 @@ import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
 import { deleteSaleAction } from '@/app/actions/sales'
+import { SaleCreatedModal } from '@/components/sales/SaleCreatedModal'
 import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import type {
   Customer,
@@ -19,6 +20,26 @@ import type {
   Sale,
 } from '@/lib/types/crm'
 import { cn } from '@/lib/utils'
+
+function paymentPlanLabel(sale: Sale) {
+  if (sale.payment_type === 'full') return 'Full'
+  if (sale.installment_interval_days && sale.plan_end_date) {
+    return `Every ${sale.installment_interval_days}d · ends ${formatDate(sale.plan_end_date)}`
+  }
+  if (sale.installment_weeks) return `${sale.installment_weeks}-week`
+  return 'Installment'
+}
+
+function paymentPlanDetail(sale: Sale) {
+  if (sale.payment_type === 'full') return 'Full payment timeline'
+  if (sale.installment_interval_days && sale.plan_end_date) {
+    return `PAYGO every ${sale.installment_interval_days} days through ${formatDate(sale.plan_end_date)}`
+  }
+  if (sale.installment_weeks) {
+    return `Weekly installment timeline (${sale.installment_weeks} weeks)`
+  }
+  return 'Installment timeline'
+}
 
 export default function SalesPage({
   sales,
@@ -170,25 +191,7 @@ export default function SalesPage({
       )}
 
       {createdId && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
-          Sale <span className="font-semibold">{createdId}</span> created
-          {createdInvoice ? (
-            <>
-              {' '}
-              — invoice <span className="font-semibold">{createdInvoice}</span> generated, and
-              inventory stock was subtracted automatically.
-            </>
-          ) : (
-            ' — inventory stock was subtracted automatically.'
-          )}{' '}
-          <Link href="/invoices" className="font-medium underline underline-offset-2">
-            View invoices
-          </Link>
-          {' · '}
-          <Link href="/inventory" className="font-medium underline underline-offset-2">
-            View inventory
-          </Link>
-        </div>
+        <SaleCreatedModal saleId={createdId} invoiceId={createdInvoice} />
       )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -351,7 +354,7 @@ export default function SalesPage({
                   'Amount',
                   'Paid',
                   'Status',
-                  'Schedule',
+                  'Details',
                   ...(isAdmin ? ['Action'] : []),
                 ].map((h, i) => (
                     <th
@@ -391,7 +394,7 @@ export default function SalesPage({
                               : 'bg-accent/10 text-accent'
                           )}
                         >
-                          {sale.payment_type === 'full' ? 'Full' : `${sale.installment_weeks}-week`}
+                          {paymentPlanLabel(sale)}
                         </span>
                       </td>
                       <td className="px-5 py-4 text-right font-medium tabular-nums">
@@ -416,7 +419,7 @@ export default function SalesPage({
                           size="sm"
                           onClick={() => setExpandedSale(isExpanded ? null : sale.id)}
                         >
-                          {isExpanded ? 'Hide' : 'Timeline'}
+                          {isExpanded ? 'Hide' : 'Details'}
                         </Button>
                       </td>
                       {isAdmin && (
@@ -435,46 +438,106 @@ export default function SalesPage({
                         </td>
                       )}
                     </tr>
-                    {isExpanded && schedule && (
+                    {isExpanded && (
                       <tr className="bg-secondary/30">
                         <td colSpan={colSpan} className="px-5 py-4">
-                          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            {sale.payment_type === 'full'
-                              ? 'Full payment timeline'
-                              : `Weekly installment timeline (${sale.installment_weeks} weeks)`}
-                          </p>
-                          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                            {schedule.installments.map((inst: Installment) => (
-                              <div
-                                key={inst.id}
-                                className={cn(
-                                  'rounded-lg border px-3 py-2.5',
-                                  inst.status === 'paid' &&
-                                    'border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40',
-                                  inst.status === 'overdue' &&
-                                    'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/40',
-                                  inst.status === 'pending' && 'border-border/70 bg-card'
-                                )}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <p className="text-xs font-semibold">Week {inst.week_number}</p>
-                                  <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                                    {inst.status}
-                                  </span>
-                                </div>
-                                <p className="mt-1 font-display text-sm font-semibold tabular-nums">
-                                  {formatCurrency(inst.amount)}
-                                </p>
-                                <p className="mt-0.5 text-xs text-muted-foreground">
-                                  Due {formatDate(inst.due_date)}
-                                </p>
-                                {inst.reminder && inst.status !== 'paid' && (
-                                  <p className="mt-1 text-[11px] font-medium text-accent">
-                                    Reminder active
+                          <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
+                            <div className="space-y-3">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                Site photo
+                              </p>
+                              {sale.site_photo_url ? (
+                                <a
+                                  href={sale.site_photo_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block overflow-hidden rounded-xl border border-border/70 bg-background"
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={sale.site_photo_url}
+                                    alt={`Site photo for ${sale.id}`}
+                                    className="max-h-64 w-full object-cover"
+                                  />
+                                  <p className="px-3 py-2 text-[11px] text-muted-foreground">
+                                    Open full image
                                   </p>
-                                )}
-                              </div>
-                            ))}
+                                </a>
+                              ) : (
+                                <p className="rounded-xl border border-dashed border-border/70 px-3 py-8 text-center text-sm text-muted-foreground">
+                                  No site photo attached
+                                </p>
+                              )}
+
+                              {(sale.latitude != null && sale.longitude != null) && (
+                                <div className="rounded-xl border border-border/70 bg-background/70 px-3 py-3 text-sm">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    GPS
+                                  </p>
+                                  <p className="mt-1 font-mono text-xs tabular-nums">
+                                    {Number(sale.latitude).toFixed(6)},{' '}
+                                    {Number(sale.longitude).toFixed(6)}
+                                  </p>
+                                  {sale.gps_captured_at && (
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                      Captured {formatDate(sale.gps_captured_at)}
+                                    </p>
+                                  )}
+                                  {sale.gps_out_of_area && (
+                                    <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                                      Out-of-area flag
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            <div>
+                              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                {paymentPlanDetail(sale)}
+                              </p>
+                              {schedule ? (
+                                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                                  {schedule.installments.map((inst: Installment) => (
+                                    <div
+                                      key={inst.id}
+                                      className={cn(
+                                        'rounded-lg border px-3 py-2.5',
+                                        inst.status === 'paid' &&
+                                          'border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40',
+                                        inst.status === 'overdue' &&
+                                          'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/40',
+                                        inst.status === 'pending' && 'border-border/70 bg-card'
+                                      )}
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <p className="text-xs font-semibold">
+                                          Week {inst.week_number}
+                                        </p>
+                                        <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                          {inst.status}
+                                        </span>
+                                      </div>
+                                      <p className="mt-1 font-display text-sm font-semibold tabular-nums">
+                                        {formatCurrency(inst.amount)}
+                                      </p>
+                                      <p className="mt-0.5 text-xs text-muted-foreground">
+                                        Due {formatDate(inst.due_date)}
+                                      </p>
+                                      {inst.reminder && inst.status !== 'paid' && (
+                                        <p className="mt-1 text-[11px] font-medium text-accent">
+                                          Reminder active
+                                        </p>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-sm text-muted-foreground">
+                                  No payment schedule on this sale.
+                                </p>
+                              )}
+                            </div>
                           </div>
                         </td>
                       </tr>

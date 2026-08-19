@@ -213,6 +213,7 @@ export const sales: Sale[] = Array.from({ length: 200 }, (_, i) => {
     date: sub(MOCK_NOW, { days: getRandomNumber(0, 120) }),
     status: 'pending_payment' as SaleStatus,
     payment_type,
+    payment_method: getRandomItem(['cash', 'bank_transfer', 'card', 'cheque'] as const),
     installment_weeks,
     total_amount: totalAmount,
     amount_paid: 0,

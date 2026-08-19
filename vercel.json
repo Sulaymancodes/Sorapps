@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/paygo-reminders",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}

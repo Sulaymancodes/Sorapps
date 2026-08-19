@@ -53,7 +53,10 @@ export interface Sale {
   date: Date
   status: SaleStatus
   payment_type: PaymentType
+  payment_method: 'bank_transfer' | 'cash' | 'cheque' | 'card'
   installment_weeks?: number
+  installment_interval_days?: number
+  plan_end_date?: Date
   total_amount: number
   amount_paid: number
   discount_percent: number
@@ -91,11 +94,32 @@ export interface Invoice {
   items: InvoiceItem[]
 }
 
+export type InvoiceDetail = {
+  invoice: Invoice
+  customer: Customer
+  sale: {
+    id: string
+    payment_type: PaymentType
+    payment_method: Sale['payment_method']
+    status: SaleStatus
+    notes: string
+  }
+  payments: Array<{
+    id: string
+    amount: number
+    date: Date
+    method: string
+    reference: string
+    status: string
+  }>
+}
+
 export interface Payment {
   id: string
   invoice_id: string
   sale_id: string
   customer_id: string
+  schedule_id?: string
   installment_id?: string
   amount: number
   date: Date
@@ -106,15 +130,21 @@ export interface Payment {
   receipt?: string
   payment_type: PaymentType
   week_number?: number
+  is_partial?: boolean
+  expected_amount?: number
+  validity_days?: number
+  activation_id?: string
+  notes?: string
 }
 
 export interface Installment {
   id: string
   week_number: number
   amount: number
+  paid_amount?: number
   due_date: Date
   paid_date?: Date
-  status: 'pending' | 'paid' | 'overdue'
+  status: 'pending' | 'partial' | 'paid' | 'overdue'
   reminder?: boolean
 }
 
@@ -125,6 +155,8 @@ export interface PaymentSchedule {
   customer_id: string
   payment_type: PaymentType
   installment_weeks?: number
+  installment_interval_days?: number
+  plan_end_date?: Date
   total_amount: number
   paid_amount: number
   installments: Installment[]
@@ -236,7 +268,10 @@ export type SaleInput = {
   customer_id?: string
   new_customer?: CustomerInput
   payment_type: PaymentType
+  payment_method: 'bank_transfer' | 'cash' | 'cheque' | 'card'
   installment_weeks?: number
+  installment_interval_days?: number
+  plan_end_date?: string
   discount_percent: number
   transport_cost: number
   notes: string

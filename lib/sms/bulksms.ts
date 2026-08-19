@@ -115,12 +115,46 @@ export function buildActivationSmsBody(params: {
   code: string
   deviceSerial?: string
   validityDays?: number
+  amountPaid?: number
+  isPartial?: boolean
 }) {
   const serialLine = params.deviceSerial ? ` Device: ${params.deviceSerial}.` : ''
   const validityLine =
     typeof params.validityDays === 'number'
       ? ` Valid for ${params.validityDays} day${params.validityDays === 1 ? '' : 's'}.`
       : ''
+  const partialLine = params.isPartial ? ' Partial payment applied.' : ''
 
-  return `Sorapps: Hello ${params.customerName}, your activation code is ${params.code}.${serialLine}${validityLine} Keep this code safe.`
+  return `Sorapps: Hello ${params.customerName}, your activation code is ${params.code}.${serialLine}${validityLine}${partialLine} Keep this code safe.`
+}
+
+export function buildPaygoReminderSmsBody(params: {
+  customerName: string
+  amount: number
+  dueDateLabel: string
+  weekNumber?: number
+  daysUntil: number
+}) {
+  const week =
+    typeof params.weekNumber === 'number' ? ` (week ${params.weekNumber})` : ''
+  const when =
+    params.daysUntil === 0
+      ? 'today'
+      : params.daysUntil === 1
+        ? 'tomorrow'
+        : `in ${params.daysUntil} days`
+
+  return `Sorapps: Hello ${params.customerName}, PAYGO installment${week} of NGN ${params.amount.toLocaleString('en-NG')} is due ${when} (${params.dueDateLabel}). Please pay to keep your device active.`
+}
+
+export function buildPaygoOverdueSmsBody(params: {
+  customerName: string
+  amount: number
+  dueDateLabel: string
+  weekNumber?: number
+  daysOverdue: number
+}) {
+  const week =
+    typeof params.weekNumber === 'number' ? ` (week ${params.weekNumber})` : ''
+  return `Sorapps: Hello ${params.customerName}, your PAYGO payment${week} of NGN ${params.amount.toLocaleString('en-NG')} was due on ${params.dueDateLabel} and is ${params.daysOverdue} day${params.daysOverdue === 1 ? '' : 's'} overdue. Please pay to restore service.`
 }

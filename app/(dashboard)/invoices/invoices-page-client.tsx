@@ -155,7 +155,12 @@ export function InvoicesPageClient({ invoices }: { invoices: Invoice[] }) {
                   className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40"
                 >
                   <td className="px-5 py-4">
-                    <p className="font-medium">{invoice.invoice_number}</p>
+                    <Link
+                      href={`/invoices/${encodeURIComponent(invoice.id)}`}
+                      className="font-medium text-primary underline-offset-2 hover:underline"
+                    >
+                      {invoice.invoice_number}
+                    </Link>
                   </td>
                   <td className="px-5 py-4 text-sm">{invoice.sale_id}</td>
                   <td className="px-5 py-4 text-sm">{formatDate(invoice.issue_date)}</td>

@@ -6,15 +6,16 @@ import { MessageSquare, RefreshCw, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
+import { SearchableSelect } from '@/components/common/SearchableSelect'
 import {
   resendActivationSmsAction,
   sendActivationSmsAction,
 } from '@/app/actions/activations'
+import { calculateValidityDays } from '@/lib/paygo/validity'
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils/formatting'
 import { cn } from '@/lib/utils'
 
@@ -24,7 +25,11 @@ type SaleOption = {
   customer_id: string
   date: string
   total_amount: number
+  amount_paid: number
+  outstanding: number
+  expected_amount: number
   status: string
+  payment_type: string
 }
 type DeviceOption = {
   id: string
@@ -41,10 +46,14 @@ type ActivationRow = {
   customer_name: string
   sale_id?: string
   warranty_id?: string
+  payment_id?: string
   device_serial: string
   message_body: string
   status: string
   validity_days: number
+  amount_paid: number
+  expected_amount?: number
+  is_partial: boolean
   expires_at: string
   provider_message_id?: string
   error_message?: string
@@ -65,18 +74,24 @@ function statusClass(status: string) {
   }
 }
 
+function customerOptionLabel(c: CustomerOption) {
+  return `${c.name} · ${c.phone}${c.city ? ` · ${c.city}` : ''}`
+}
+
 export function ActivationsPageClient({
   customers,
   sales,
   devices,
   activations,
   smsConfigured,
+  baseValidityDays,
 }: {
   customers: CustomerOption[]
   sales: SaleOption[]
   devices: DeviceOption[]
   activations: ActivationRow[]
   smsConfigured: boolean
+  baseValidityDays: number
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -86,7 +101,9 @@ export function ActivationsPageClient({
   const [warrantyId, setWarrantyId] = useState('')
   const [deviceSerial, setDeviceSerial] = useState('')
   const [phone, setPhone] = useState('')
-  const [validityDays, setValidityDays] = useState(30)
+  const [amountPaid, setAmountPaid] = useState('')
+  const [manualValidity, setManualValidity] = useState(false)
+  const [validityDays, setValidityDays] = useState(baseValidityDays)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [resendingId, setResendingId] = useState<string | null>(null)
@@ -99,7 +116,28 @@ export function ActivationsPageClient({
     [sales, customerId]
   )
 
-  const beneficiarySale = customerSales[0] ?? null
+  const customerSelectOptions = useMemo(
+    () =>
+      [...customers]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((c) => customerOptionLabel(c)),
+    [customers]
+  )
+
+  const customerIdByLabel = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const c of customers) map.set(customerOptionLabel(c), c.id)
+    return map
+  }, [customers])
+
+  const selectedCustomerLabel = useMemo(() => {
+    if (!customerId) return ''
+    const customer = customers.find((c) => c.id === customerId)
+    return customer ? customerOptionLabel(customer) : ''
+  }, [customerId, customers])
+
+  const beneficiarySale =
+    (saleId ? customerSales.find((s) => s.id === saleId) : null) || customerSales[0] || null
 
   const beneficiaryDevice = useMemo(() => {
     if (!customerId) return null
@@ -111,6 +149,22 @@ export function ActivationsPageClient({
     return linked.find((d) => d.serial_number.trim()) || linked[0] || null
   }, [devices, customerId, beneficiarySale])
 
+  const amountNum = Math.max(0, Math.round(Number(amountPaid) || 0))
+  const expectedAmount = beneficiarySale?.expected_amount || 0
+
+  const calc = useMemo(() => {
+    if (!expectedAmount || amountNum <= 0) return null
+    return calculateValidityDays({
+      amount_paid: amountNum,
+      expected_amount: expectedAmount,
+      base_validity_days: baseValidityDays,
+    })
+  }, [amountNum, expectedAmount, baseValidityDays])
+
+  const effectiveValidity = manualValidity
+    ? validityDays
+    : calc?.validity_days ?? validityDays
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return activations
@@ -121,7 +175,8 @@ export function ActivationsPageClient({
         a.code.includes(q) ||
         a.device_serial.toLowerCase().includes(q) ||
         a.id.toLowerCase().includes(q) ||
-        (a.sale_id || '').toLowerCase().includes(q)
+        (a.sale_id || '').toLowerCase().includes(q) ||
+        (a.payment_id || '').toLowerCase().includes(q)
     )
   }, [activations, search])
 
@@ -129,12 +184,15 @@ export function ActivationsPageClient({
     setCustomerId(id)
     setError(null)
     setSuccess(null)
+    setManualValidity(false)
 
     if (!id) {
       setSaleId('')
       setWarrantyId('')
       setDeviceSerial('')
       setPhone('')
+      setAmountPaid('')
+      setValidityDays(baseValidityDays)
       return
     }
 
@@ -146,6 +204,7 @@ export function ActivationsPageClient({
         .filter((s) => s.customer_id === id)
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0] || null
     setSaleId(sale?.id || '')
+    setAmountPaid(sale ? String(sale.expected_amount) : '')
 
     const linked = devices.filter((d) => {
       if (d.customer_id !== id) return false
@@ -177,7 +236,9 @@ export function ActivationsPageClient({
         warranty_id: resolvedWarrantyId,
         device_serial: resolvedSerial,
         phone: phone || undefined,
-        validity_days: validityDays,
+        validity_days: effectiveValidity,
+        amount_paid: amountNum || undefined,
+        expected_amount: expectedAmount || undefined,
       })
 
       if (!result.success) {
@@ -186,9 +247,9 @@ export function ActivationsPageClient({
       }
 
       setSuccess(
-        `Activation code sent to ${result.data.phone}. Code expires ${formatDate(
-          new Date(result.data.expires_at)
-        )}.`
+        `Activation code sent to ${result.data.phone} · ${result.data.validity_days} days${
+          result.data.is_partial ? ' (partial)' : ''
+        } · expires ${formatDate(new Date(result.data.expires_at))}.`
       )
       router.refresh()
     })
@@ -214,7 +275,7 @@ export function ActivationsPageClient({
     <PageShell>
       <PageHeader
         title="Device Activations"
-        description="Generate activation codes and send confirmation SMS to beneficiaries via BulkSMS Nigeria"
+        description="PAYGO amount → validity days, then SMS activation codes via BulkSMS Nigeria"
       />
 
       {!smsConfigured && (
@@ -236,22 +297,21 @@ export function ActivationsPageClient({
       )}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[380px_1fr]">
-        <Panel title="Send activation SMS" description="Creates a code and texts the customer">
+        <Panel title="Send activation SMS" description="Validity scales with amount paid vs stipulated installment">
           <div className="space-y-4">
             <div>
               <Label htmlFor="customer">Customer / beneficiary</Label>
-              <Select
+              <SearchableSelect
                 id="customer"
-                value={customerId}
-                onChange={(e) => onCustomerChange(e.target.value)}
-              >
-                <option value="">Select customer…</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} — {c.phone}
-                  </option>
-                ))}
-              </Select>
+                options={customerSelectOptions}
+                value={selectedCustomerLabel}
+                onChange={(label) => {
+                  const id = label ? customerIdByLabel.get(label) || '' : ''
+                  onCustomerChange(id)
+                }}
+                placeholder="Search by name, phone, or city…"
+                emptyLabel="No customers match"
+              />
             </div>
 
             {customerId && (
@@ -269,6 +329,12 @@ export function ActivationsPageClient({
                         ? `${beneficiarySale.id} · ${formatCurrency(beneficiarySale.total_amount)} · ${formatDate(new Date(beneficiarySale.date))}`
                         : 'No sale on record for this customer'}
                     </p>
+                    {beneficiarySale && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Stipulated next: {formatCurrency(beneficiarySale.expected_amount)} ·
+                        Outstanding {formatCurrency(beneficiarySale.outstanding)}
+                      </p>
+                    )}
                   </div>
                   <div className="rounded-lg bg-background/70 px-3 py-2">
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -311,18 +377,61 @@ export function ActivationsPageClient({
             </div>
 
             <div>
-              <Label htmlFor="validity">Validity (days)</Label>
+              <Label htmlFor="amount">Amount paid (₦)</Label>
+              <Input
+                id="amount"
+                type="number"
+                min={0}
+                value={amountPaid}
+                onChange={(e) => {
+                  setAmountPaid(e.target.value)
+                  setManualValidity(false)
+                }}
+                placeholder="Matches stipulated installment for 30 days"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Pay more than the stipulated installment to extend beyond {baseValidityDays} days;
+                pay less for a shorter (partial) period.
+              </p>
+            </div>
+
+            {calc && (
+              <div className="rounded-lg border border-border/70 bg-background px-3 py-2 text-xs">
+                <p className="font-medium">
+                  Calculated validity: {calc.validity_days} days
+                  {calc.is_partial ? ' · partial payment' : ''}
+                </p>
+                <p className="mt-0.5 text-muted-foreground">
+                  {(calc.ratio * 100).toFixed(0)}% of {formatCurrency(expectedAmount)} →{' '}
+                  {calc.validity_days} / {baseValidityDays} base days
+                </p>
+              </div>
+            )}
+
+            <div>
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <Label htmlFor="validity">Validity (days)</Label>
+                <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={manualValidity}
+                    onChange={(e) => setManualValidity(e.target.checked)}
+                  />
+                  Override
+                </label>
+              </div>
               <Input
                 id="validity"
                 type="number"
                 min={1}
                 max={365}
-                value={validityDays}
-                onChange={(e) => setValidityDays(Number(e.target.value) || 30)}
+                disabled={!manualValidity}
+                value={effectiveValidity}
+                onChange={(e) => {
+                  setManualValidity(true)
+                  setValidityDays(Number(e.target.value) || baseValidityDays)
+                }}
               />
-              <p className="mt-1 text-xs text-muted-foreground">
-                Default 30 days. PAYGO amount-based validity will plug in here next.
-              </p>
             </div>
 
             <Button
@@ -337,9 +446,9 @@ export function ActivationsPageClient({
         </Panel>
 
         <div className="space-y-6">
-          <Panel title="Activation history" description="Codes generated and SMS delivery status">
+          <Panel title="Activation history" description="Codes, amounts, validity, and linked payments">
             <SearchField
-              placeholder="Search by customer, phone, code, serial…"
+              placeholder="Search by customer, phone, code, serial, payment…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -350,16 +459,23 @@ export function ActivationsPageClient({
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-border/70 bg-secondary/40">
-                    {['Customer', 'Code', 'Phone', 'Device', 'Status', 'Sent', 'Action'].map(
-                      (h) => (
-                        <th
-                          key={h}
-                          className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                        >
-                          {h}
-                        </th>
-                      )
-                    )}
+                    {[
+                      'Customer',
+                      'Code',
+                      'Amount',
+                      'Validity',
+                      'Device',
+                      'Status',
+                      'Sent',
+                      'Action',
+                    ].map((h) => (
+                      <th
+                        key={h}
+                        className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                      >
+                        {h}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -371,11 +487,22 @@ export function ActivationsPageClient({
                       <td className="px-4 py-3">
                         <p className="text-sm font-medium">{row.customer_name}</p>
                         <p className="text-xs text-muted-foreground">{row.id}</p>
+                        {row.payment_id && (
+                          <p className="text-xs text-muted-foreground">{row.payment_id}</p>
+                        )}
                       </td>
                       <td className="px-4 py-3 font-mono text-sm font-semibold tracking-wider">
                         {row.code}
                       </td>
-                      <td className="px-4 py-3 text-sm">{row.phone}</td>
+                      <td className="px-4 py-3 text-sm tabular-nums">
+                        {row.amount_paid > 0 ? formatCurrency(row.amount_paid) : '—'}
+                        {row.is_partial && (
+                          <span className="mt-0.5 block text-[10px] font-semibold uppercase text-amber-700 dark:text-amber-300">
+                            Partial
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm tabular-nums">{row.validity_days}d</td>
                       <td className="px-4 py-3 text-sm">
                         {row.device_serial || '—'}
                         {row.sale_id && (

@@ -1,7 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import Link from 'next/link'
+import { useEffect, useRef, useState, useTransition } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   BarChart3,
@@ -23,12 +22,20 @@ import {
   Boxes,
   AlertCircle,
   MessageSquare,
+  CheckCheck,
+  Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { GlobalSearch } from '@/components/layout/GlobalSearch'
 import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import { authClient } from '@/lib/auth-client'
+import {
+  isReminderRead,
+  loadReminderReads,
+  markRemindersRead,
+  type ReminderReadMap,
+} from '@/lib/reminders/read-state'
 
 export type DashboardUser = {
   name: string
@@ -107,7 +114,9 @@ function LogoMark({ compact = false }: { compact?: boolean }) {
       </div>
       {!compact && (
         <div className="min-w-0 leading-tight">
-          <p className="font-display text-lg font-semibold tracking-tight text-sidebar-foreground">Sorapps</p>
+          <p className="font-display text-lg font-semibold tracking-tight text-sidebar-foreground">
+            Sorapps
+          </p>
           <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-sidebar-foreground/50">
             Solar CRM
           </p>
@@ -130,9 +139,29 @@ export function DashboardShell({
   const [mobileOpen, setMobileOpen] = useState(false)
   const [remindersOpen, setRemindersOpen] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
+  const [reads, setReads] = useState<ReminderReadMap>({})
+  const [readsReady, setReadsReady] = useState(false)
+  const [navPending, startNavTransition] = useTransition()
+  const [showNavLoading, setShowNavLoading] = useState(false)
   const remindersRef = useRef<HTMLDivElement>(null)
   const pathname = usePathname()
   const router = useRouter()
+
+  useEffect(() => {
+    setReads(loadReminderReads())
+    setReadsReady(true)
+  }, [])
+
+  // Only show the loading UI if navigation is still pending after a short delay,
+  // so fast loads don't flash a spinner.
+  useEffect(() => {
+    if (!navPending) {
+      setShowNavLoading(false)
+      return
+    }
+    const timer = window.setTimeout(() => setShowNavLoading(true), 150)
+    return () => window.clearTimeout(timer)
+  }, [navPending])
 
   useEffect(() => {
     setMobileOpen(false)
@@ -158,10 +187,37 @@ export function DashboardShell({
   }, [remindersOpen])
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`)
-  const urgentCount = reminders.filter(
+
+  const unreadReminders = reminders.filter((r) => !isReminderRead(r.id, reads))
+  const unreadUrgent = unreadReminders.filter(
     (r) => r.status === 'overdue' || r.status === 'due_today'
   ).length
-  const badgeCount = urgentCount > 0 ? urgentCount : reminders.length
+  const badgeCount = readsReady
+    ? unreadUrgent > 0
+      ? unreadUrgent
+      : unreadReminders.length
+    : 0
+
+  function navigateTo(href: string) {
+    if (pathname === href) return
+    setMobileOpen(false)
+    startNavTransition(() => {
+      router.push(href)
+    })
+  }
+
+  function handleMarkAllRead() {
+    const next = markRemindersRead(
+      reminders.map((r) => r.id),
+      reads
+    )
+    setReads(next)
+  }
+
+  function handleMarkOneRead(id: string) {
+    const next = markRemindersRead([id], reads)
+    setReads(next)
+  }
 
   async function handleSignOut() {
     setSigningOut(true)
@@ -176,7 +232,12 @@ export function DashboardShell({
 
   const sidebarContent = (compact: boolean) => (
     <>
-      <div className={cn('flex h-16 items-center border-b border-sidebar-border', compact ? 'justify-center px-2' : 'justify-between px-4')}>
+      <div
+        className={cn(
+          'flex h-16 items-center border-b border-sidebar-border',
+          compact ? 'justify-center px-2' : 'justify-between px-4'
+        )}
+      >
         <LogoMark compact={compact} />
         {!compact && (
           <Button
@@ -204,12 +265,13 @@ export function DashboardShell({
                 const Icon = item.icon
                 const active = isActive(item.href)
                 return (
-                  <Link
+                  <button
                     key={item.href}
-                    href={item.href}
+                    type="button"
                     title={compact ? item.name : undefined}
+                    onClick={() => navigateTo(item.href)}
                     className={cn(
-                      'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                      'group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors',
                       compact && 'justify-center px-2',
                       active
                         ? 'bg-sidebar-accent text-sidebar-foreground shadow-sm'
@@ -219,9 +281,11 @@ export function DashboardShell({
                     {active && (
                       <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-sidebar-primary" />
                     )}
-                    <Icon className={cn('size-[18px] shrink-0', active && 'text-sidebar-primary')} />
+                    <Icon
+                      className={cn('size-[18px] shrink-0', active && 'text-sidebar-primary')}
+                    />
                     {!compact && <span>{item.name}</span>}
-                  </Link>
+                  </button>
                 )
               })}
             </div>
@@ -230,18 +294,19 @@ export function DashboardShell({
       </nav>
 
       <div className={cn('border-t border-sidebar-border p-3', compact && 'flex justify-center')}>
-        <Link
-          href="/settings"
+        <button
+          type="button"
+          onClick={() => navigateTo('/settings')}
+          title={compact ? 'Settings' : undefined}
           className={cn(
-            'mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-foreground',
+            'mb-2 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-foreground',
             compact && 'justify-center px-2',
             isActive('/settings') && 'bg-sidebar-accent text-sidebar-foreground'
           )}
-          title={compact ? 'Settings' : undefined}
         >
           <Settings className="size-[18px]" />
           {!compact && <span>Settings</span>}
-        </Link>
+        </button>
         {!compact && (
           <Button
             variant="ghost"
@@ -249,7 +314,11 @@ export function DashboardShell({
             onClick={handleSignOut}
             className="w-full justify-start gap-2 text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
           >
-            <LogOut className="size-4" />
+            {signingOut ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <LogOut className="size-4" />
+            )}
             {signingOut ? 'Signing out…' : 'Logout'}
           </Button>
         )}
@@ -258,7 +327,16 @@ export function DashboardShell({
   )
 
   return (
-    <div className="flex min-h-dvh">
+    <div className="relative flex min-h-dvh">
+      {showNavLoading && (
+        <div
+          className="pointer-events-none fixed inset-x-0 top-0 z-[90] h-0.5 overflow-hidden bg-transparent"
+          aria-hidden
+        >
+          <div className="h-full w-1/3 animate-pulse bg-accent shadow-[0_0_8px_var(--color-accent)] [animation-duration:0.8s]" />
+        </div>
+      )}
+
       {/* Desktop sidebar */}
       <aside
         className={cn(
@@ -343,7 +421,7 @@ export function DashboardShell({
                 onClick={() => setRemindersOpen((open) => !open)}
               >
                 <Bell className="size-5" />
-                {reminders.length > 0 && (
+                {badgeCount > 0 && (
                   <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-accent-foreground ring-2 ring-surface">
                     {badgeCount > 9 ? '9+' : badgeCount}
                   </span>
@@ -352,13 +430,26 @@ export function DashboardShell({
 
               {remindersOpen && (
                 <div className="absolute right-0 top-11 z-50 w-[min(100vw-2rem,360px)] overflow-hidden rounded-xl border border-border/80 bg-card shadow-xl">
-                  <div className="border-b border-border/70 px-4 py-3">
-                    <p className="font-display text-sm font-semibold">Payment Reminders</p>
-                    <p className="text-xs text-muted-foreground">
-                      {reminders.length === 0
-                        ? 'No upcoming installments'
-                        : `${reminders.length} unpaid installment${reminders.length === 1 ? '' : 's'}`}
-                    </p>
+                  <div className="flex items-start justify-between gap-2 border-b border-border/70 px-4 py-3">
+                    <div>
+                      <p className="font-display text-sm font-semibold">Payment Reminders</p>
+                      <p className="text-xs text-muted-foreground">
+                        {reminders.length === 0
+                          ? 'No upcoming installments'
+                          : `${unreadReminders.length} unread · ${reminders.length} total`}
+                      </p>
+                    </div>
+                    {unreadReminders.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        className="gap-1 text-xs"
+                        onClick={handleMarkAllRead}
+                      >
+                        <CheckCheck className="size-3.5" />
+                        Mark all read
+                      </Button>
+                    )}
                   </div>
                   <div className="max-h-80 overflow-y-auto">
                     {reminders.length === 0 ? (
@@ -366,50 +457,87 @@ export function DashboardShell({
                         Create installment sales to see due dates here
                       </p>
                     ) : (
-                      reminders.slice(0, 8).map((reminder) => (
-                        <Link
-                          key={reminder.id}
-                          href="/calendar"
-                          onClick={() => setRemindersOpen(false)}
-                          className="block border-b border-border/50 px-4 py-3 transition-colors last:border-0 hover:bg-muted/60"
-                        >
-                          <div className="flex gap-2">
-                            <AlertCircle
-                              className={cn(
-                                'mt-0.5 size-4 shrink-0',
-                                reminder.status === 'overdue' && 'text-red-600',
-                                reminder.status === 'due_today' && 'text-amber-600',
-                                reminder.status === 'due_soon' && 'text-sky-600'
-                              )}
-                            />
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium leading-snug">{reminder.message}</p>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                {formatCurrency(reminder.amount)} ·{' '}
-                                {formatDate(new Date(reminder.due_date))}
-                                {reminder.status === 'overdue' ? ' · Overdue' : ''}
-                              </p>
+                      reminders.slice(0, 8).map((reminder) => {
+                        const read = isReminderRead(reminder.id, reads)
+                        return (
+                          <div
+                            key={reminder.id}
+                            className={cn(
+                              'border-b border-border/50 px-4 py-3 last:border-0',
+                              read ? 'opacity-60' : 'bg-muted/20'
+                            )}
+                          >
+                            <div className="flex gap-2">
+                              <AlertCircle
+                                className={cn(
+                                  'mt-0.5 size-4 shrink-0',
+                                  reminder.status === 'overdue' && 'text-red-600',
+                                  reminder.status === 'due_today' && 'text-amber-600',
+                                  reminder.status === 'due_soon' && 'text-sky-600'
+                                )}
+                              />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium leading-snug">
+                                  {reminder.message}
+                                  {!read && (
+                                    <span className="ml-1.5 inline-block size-1.5 rounded-full bg-accent align-middle" />
+                                  )}
+                                </p>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  {formatCurrency(reminder.amount)} ·{' '}
+                                  {formatDate(new Date(reminder.due_date))}
+                                  {reminder.status === 'overdue' ? ' · Overdue' : ''}
+                                </p>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    className="text-[11px] font-medium text-primary hover:underline"
+                                    onClick={() => {
+                                      handleMarkOneRead(reminder.id)
+                                      setRemindersOpen(false)
+                                      navigateTo('/calendar')
+                                    }}
+                                  >
+                                    Open calendar
+                                  </button>
+                                  {!read && (
+                                    <button
+                                      type="button"
+                                      className="text-[11px] font-medium text-muted-foreground hover:text-foreground hover:underline"
+                                      onClick={() => handleMarkOneRead(reminder.id)}
+                                    >
+                                      Mark as read
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           </div>
-                        </Link>
-                      ))
+                        )
+                      })
                     )}
                   </div>
                   <div className="flex items-center justify-between border-t border-border/70 px-4 py-2">
-                    <Link
-                      href="/calendar"
+                    <button
+                      type="button"
                       className="text-xs font-medium text-primary hover:underline"
-                      onClick={() => setRemindersOpen(false)}
+                      onClick={() => {
+                        setRemindersOpen(false)
+                        navigateTo('/calendar')
+                      }}
                     >
                       Open calendar
-                    </Link>
-                    <Link
-                      href="/payments"
+                    </button>
+                    <button
+                      type="button"
                       className="text-xs font-medium text-muted-foreground hover:text-foreground hover:underline"
-                      onClick={() => setRemindersOpen(false)}
+                      onClick={() => {
+                        setRemindersOpen(false)
+                        navigateTo('/payments')
+                      }}
                     >
                       View payments
-                    </Link>
+                    </button>
                   </div>
                 </div>
               )}
@@ -426,7 +554,17 @@ export function DashboardShell({
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        <main className="relative flex-1 overflow-y-auto">
+          {showNavLoading && (
+            <div className="absolute inset-0 z-20 flex items-start justify-center bg-background/40 pt-24 backdrop-blur-[1px]">
+              <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
+                <Loader2 className="size-3.5 animate-spin text-accent" />
+                Loading…
+              </div>
+            </div>
+          )}
+          {children}
+        </main>
       </div>
     </div>
   )

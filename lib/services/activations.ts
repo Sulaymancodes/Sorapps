@@ -3,6 +3,8 @@ import { desc, eq } from 'drizzle-orm'
 import { addDays } from 'date-fns'
 import { db } from '@/lib/db'
 import { activationCodes, customers, sales, warranties } from '@/lib/db/schema'
+import { calculateValidityDays, getPaygoBaseValidityDays } from '@/lib/paygo/validity'
+import { getExpectedAmountForSale } from '@/lib/services/payments'
 import { nextId } from '@/lib/utils/ids'
 import {
   buildActivationSmsBody,
@@ -18,10 +20,14 @@ export type ActivationRecord = {
   customer_name: string
   sale_id?: string
   warranty_id?: string
+  payment_id?: string
   device_serial: string
   message_body: string
   status: string
   validity_days: number
+  amount_paid: number
+  expected_amount?: number
+  is_partial: boolean
   expires_at: Date
   provider_message_id?: string
   error_message?: string
@@ -35,7 +41,11 @@ export type SendActivationInput = {
   warranty_id?: string
   device_serial?: string
   phone?: string
+  /** Explicit override; otherwise derived from amount_paid / expected */
   validity_days?: number
+  amount_paid?: number
+  expected_amount?: number
+  payment_id?: string
   created_by_user_id?: string
 }
 
@@ -56,10 +66,14 @@ function mapRow(
     customer_name: customerName,
     sale_id: row.saleId ?? undefined,
     warranty_id: row.warrantyId ?? undefined,
+    payment_id: row.paymentId ?? undefined,
     device_serial: row.deviceSerial,
     message_body: row.messageBody,
     status: row.status,
     validity_days: row.validityDays,
+    amount_paid: row.amountPaid,
+    expected_amount: row.expectedAmount ?? undefined,
+    is_partial: row.isPartial,
     expires_at: row.expiresAt,
     provider_message_id: row.providerMessageId ?? undefined,
     error_message: row.errorMessage ?? undefined,
@@ -93,8 +107,9 @@ export async function sendActivationSms(
   const customer = customerRows[0]
   if (!customer) throw new Error('Customer not found')
 
-  if (input.sale_id) {
-    const saleRows = await db.select().from(sales).where(eq(sales.id, input.sale_id)).limit(1)
+  let saleId = input.sale_id
+  if (saleId) {
+    const saleRows = await db.select().from(sales).where(eq(sales.id, saleId)).limit(1)
     if (!saleRows[0]) throw new Error('Sale not found')
     if (saleRows[0].customerId !== customer.id) {
       throw new Error('Sale does not belong to this customer')
@@ -117,6 +132,7 @@ export async function sendActivationSms(
     }
     if (!deviceSerial) deviceSerial = warranty.serialNumber
     warrantyId = warranty.id
+    if (!saleId) saleId = warranty.saleId
   }
 
   const phoneRaw = input.phone?.trim() || customer.phone
@@ -125,13 +141,52 @@ export async function sendActivationSms(
     throw new Error('Customer phone number is invalid for SMS delivery')
   }
 
-  const validityDays = Math.max(1, Math.round(input.validity_days ?? 30))
+  let expectedAmount = input.expected_amount
+  let amountPaid = input.amount_paid
+
+  if (saleId && (expectedAmount == null || expectedAmount <= 0)) {
+    const expected = await getExpectedAmountForSale(saleId)
+    if (expected) expectedAmount = expected.expected_amount
+  }
+
+  let validityDays: number
+  let isPartial = false
+
+  if (
+    typeof amountPaid === 'number' &&
+    amountPaid > 0 &&
+    typeof expectedAmount === 'number' &&
+    expectedAmount > 0
+  ) {
+    const calc = calculateValidityDays({
+      amount_paid: amountPaid,
+      expected_amount: expectedAmount,
+    })
+    validityDays =
+      typeof input.validity_days === 'number' && input.validity_days > 0
+        ? Math.max(1, Math.round(input.validity_days))
+        : calc.validity_days
+    isPartial = calc.is_partial
+  } else if (typeof input.validity_days === 'number' && input.validity_days > 0) {
+    validityDays = Math.max(1, Math.round(input.validity_days))
+  } else {
+    validityDays = getPaygoBaseValidityDays()
+  }
+
+  amountPaid = Math.max(0, Math.round(amountPaid || 0))
+  const expectedAmountValue =
+    typeof expectedAmount === 'number' && expectedAmount > 0
+      ? Math.round(expectedAmount)
+      : null
+
   const code = generateActivationCode(6)
   const messageBody = buildActivationSmsBody({
     customerName: customer.name.split(/\s+/)[0] || customer.name,
     code,
     deviceSerial: deviceSerial || undefined,
     validityDays,
+    amountPaid: amountPaid || undefined,
+    isPartial,
   })
 
   const existing = await db.select({ id: activationCodes.id }).from(activationCodes)
@@ -150,12 +205,16 @@ export async function sendActivationSms(
       code,
       phone,
       customerId: customer.id,
-      saleId: input.sale_id || null,
+      saleId: saleId || null,
       warrantyId: warrantyId || null,
+      paymentId: input.payment_id || null,
       deviceSerial,
       messageBody,
       status: 'pending',
       validityDays,
+      amountPaid,
+      expectedAmount: expectedAmountValue,
+      isPartial,
       expiresAt,
       createdByUserId: input.created_by_user_id || null,
     })
@@ -208,7 +267,6 @@ export async function resendActivationSms(id: string): Promise<{ activation: Act
   const customer = customerRows[0]
   if (!customer) throw new Error('Customer not found')
 
-  // Issue a fresh code on resend for security
   return sendActivationSms({
     customer_id: existing.customerId,
     sale_id: existing.saleId || undefined,
@@ -216,5 +274,8 @@ export async function resendActivationSms(id: string): Promise<{ activation: Act
     device_serial: existing.deviceSerial || undefined,
     phone: existing.phone,
     validity_days: existing.validityDays,
+    amount_paid: existing.amountPaid || undefined,
+    expected_amount: existing.expectedAmount ?? undefined,
+    payment_id: existing.paymentId || undefined,
   })
 }

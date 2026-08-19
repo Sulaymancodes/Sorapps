@@ -13,6 +13,7 @@ export function SearchableSelect({
   error,
   id,
   disabled = false,
+  onQueryChange,
 }: {
   options: readonly string[]
   value: string
@@ -22,6 +23,8 @@ export function SearchableSelect({
   error?: string
   id?: string
   disabled?: boolean
+  /** Fires as the user types (for remote option loading). */
+  onQueryChange?: (query: string) => void
 }) {
   const listId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -33,10 +36,12 @@ export function SearchableSelect({
   const selected = value || null
 
   const filtered = useMemo(() => {
+    // Remote search: parent owns matching — don't re-filter labels locally
+    if (onQueryChange) return [...options]
     const q = query.trim().toLowerCase()
     if (!q) return [...options]
     return options.filter((option) => option.toLowerCase().includes(q))
-  }, [options, query])
+  }, [options, query, onQueryChange])
 
   useEffect(() => {
     function onPointerDown(event: MouseEvent) {
@@ -52,6 +57,11 @@ export function SearchableSelect({
   useEffect(() => {
     setActiveIndex(0)
   }, [query, open])
+
+  useEffect(() => {
+    if (!open) return
+    onQueryChange?.(query)
+  }, [query, open, onQueryChange])
 
   function selectOption(option: string) {
     onChange(option)

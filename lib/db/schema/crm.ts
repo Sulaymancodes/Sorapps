@@ -73,7 +73,10 @@ export const sales = pgTable(
     date: timestamp('date').defaultNow().notNull(),
     status: text('status').notNull().default('pending_payment'),
     paymentType: text('payment_type').notNull(),
+    paymentMethod: text('payment_method').notNull().default('cash'),
     installmentWeeks: integer('installment_weeks'),
+    installmentIntervalDays: integer('installment_interval_days'),
+    planEndDate: timestamp('plan_end_date'),
     totalAmount: integer('total_amount').notNull(),
     amountPaid: integer('amount_paid').notNull().default(0),
     discountPercent: real('discount_percent').notNull().default(0),
@@ -165,6 +168,8 @@ export const paymentSchedules = pgTable(
       .references(() => customers.id),
     paymentType: text('payment_type').notNull(),
     installmentWeeks: integer('installment_weeks'),
+    installmentIntervalDays: integer('installment_interval_days'),
+    planEndDate: timestamp('plan_end_date'),
     totalAmount: integer('total_amount').notNull(),
     paidAmount: integer('paid_amount').notNull().default(0),
     nextDueDate: timestamp('next_due_date'),
@@ -181,12 +186,58 @@ export const installments = pgTable(
       .references(() => paymentSchedules.id, { onDelete: 'cascade' }),
     weekNumber: integer('week_number').notNull(),
     amount: integer('amount').notNull(),
+    paidAmount: integer('paid_amount').notNull().default(0),
     dueDate: timestamp('due_date').notNull(),
     paidDate: timestamp('paid_date'),
-    status: text('status').notNull().default('pending'),
+    status: text('status').notNull().default('pending'), // pending | partial | paid | overdue
     reminder: boolean('reminder').notNull().default(false),
+    reminderSmsSentAt: timestamp('reminder_sms_sent_at'),
+    overdueSmsSentAt: timestamp('overdue_sms_sent_at'),
   },
   (table) => [index('installments_schedule_id_idx').on(table.scheduleId)]
+)
+
+export const payments = pgTable(
+  'payments',
+  {
+    id: text('id').primaryKey(),
+    invoiceId: text('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+    saleId: text('sale_id')
+      .notNull()
+      .references(() => sales.id, { onDelete: 'cascade' }),
+    customerId: text('customer_id')
+      .notNull()
+      .references(() => customers.id),
+    scheduleId: text('schedule_id').references(() => paymentSchedules.id, {
+      onDelete: 'set null',
+    }),
+    installmentId: text('installment_id').references(() => installments.id, {
+      onDelete: 'set null',
+    }),
+    amount: integer('amount').notNull(),
+    date: timestamp('date').defaultNow().notNull(),
+    method: text('method').notNull().default('cash'),
+    reference: text('reference').notNull().default(''),
+    bank: text('bank').notNull().default(''),
+    status: text('status').notNull().default('success'),
+    paymentType: text('payment_type').notNull(),
+    weekNumber: integer('week_number'),
+    isPartial: boolean('is_partial').notNull().default(false),
+    expectedAmount: integer('expected_amount'),
+    validityDays: integer('validity_days'),
+    activationId: text('activation_id'),
+    notes: text('notes').notNull().default(''),
+    createdByUserId: text('created_by_user_id'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('payments_sale_id_idx').on(table.saleId),
+    index('payments_customer_id_idx').on(table.customerId),
+    index('payments_invoice_id_idx').on(table.invoiceId),
+    index('payments_date_idx').on(table.date),
+  ]
 )
 
 export const inventoryMovements = pgTable(
@@ -259,10 +310,14 @@ export const activationCodes = pgTable(
     warrantyId: text('warranty_id').references(() => warranties.id, {
       onDelete: 'set null',
     }),
+    paymentId: text('payment_id'),
     deviceSerial: text('device_serial').notNull().default(''),
     messageBody: text('message_body').notNull(),
     status: text('status').notNull().default('pending'), // pending | sent | failed | used | expired
     validityDays: integer('validity_days').notNull().default(30),
+    amountPaid: integer('amount_paid').notNull().default(0),
+    expectedAmount: integer('expected_amount'),
+    isPartial: boolean('is_partial').notNull().default(false),
     expiresAt: timestamp('expires_at').notNull(),
     providerMessageId: text('provider_message_id'),
     providerResponse: text('provider_response'),
@@ -276,6 +331,7 @@ export const activationCodes = pgTable(
     index('activation_codes_sale_id_idx').on(table.saleId),
     index('activation_codes_phone_idx').on(table.phone),
     index('activation_codes_status_idx').on(table.status),
+    index('activation_codes_payment_id_idx').on(table.paymentId),
   ]
 )
 
@@ -288,6 +344,7 @@ export const productsRelations = relations(products, ({ many }) => ({
 export const customersRelations = relations(customers, ({ many }) => ({
   sales: many(sales),
   warranties: many(warranties),
+  payments: many(payments),
 }))
 
 export const salesRelations = relations(sales, ({ one, many }) => ({
@@ -299,6 +356,7 @@ export const salesRelations = relations(sales, ({ one, many }) => ({
   invoice: one(invoices),
   schedule: one(paymentSchedules),
   warranties: many(warranties),
+  payments: many(payments),
 }))
 
 export const saleItemsRelations = relations(saleItems, ({ one }) => ({
@@ -355,6 +413,29 @@ export const installmentsRelations = relations(installments, ({ one }) => ({
   schedule: one(paymentSchedules, {
     fields: [installments.scheduleId],
     references: [paymentSchedules.id],
+  }),
+}))
+
+export const paymentsRelations = relations(payments, ({ one }) => ({
+  sale: one(sales, {
+    fields: [payments.saleId],
+    references: [sales.id],
+  }),
+  invoice: one(invoices, {
+    fields: [payments.invoiceId],
+    references: [invoices.id],
+  }),
+  customer: one(customers, {
+    fields: [payments.customerId],
+    references: [customers.id],
+  }),
+  schedule: one(paymentSchedules, {
+    fields: [payments.scheduleId],
+    references: [paymentSchedules.id],
+  }),
+  installment: one(installments, {
+    fields: [payments.installmentId],
+    references: [installments.id],
   }),
 }))
 
