@@ -1715,46 +1715,6 @@ export function SaleForm({
         error={siteError}
       />
 
-      <Panel title="Invoice preview" description="An invoice is created automatically when you save">
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { label: 'Subtotal', value: formatCurrency(totals.subtotal) },
-            { label: 'Total', value: formatCurrency(totals.total), emphasize: true },
-          ].map((row) => (
-            <div key={row.label} className="rounded-lg bg-secondary/40 px-3 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                {row.label}
-              </p>
-              <p
-                className={cn(
-                  'mt-1 font-display text-lg font-semibold tabular-nums',
-                  row.emphasize && 'text-primary'
-                )}
-              >
-                {row.value}
-              </p>
-            </div>
-          ))}
-        </div>
-        <p className="mt-4 text-sm text-muted-foreground">
-          {isInstallment ? (
-            <>
-              Saving creates an invoice and a PAYGO schedule
-              {planPreview
-                ? ` of ${planPreview.count} payments every ${installmentIntervalDays || 7} days`
-                : ''}
-              . Product quantities are subtracted from inventory automatically.
-            </>
-          ) : (
-            <>
-              Saving marks this sale paid in full — invoice complete with no outstanding balance and
-              no installment schedule. Product quantities are subtracted from inventory
-              automatically.
-            </>
-          )}
-        </p>
-      </Panel>
-
       {formError && (
         <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {formError}
@@ -1763,7 +1723,7 @@ export function SaleForm({
 
       <div className="flex flex-wrap gap-3">
         <Button type="submit" disabled={isSubmitting || hasDuplicates}>
-          Create sale & invoice
+          Create sale
         </Button>
         <Button type="button" variant="outline" onClick={() => router.push('/sales')}>
           Cancel

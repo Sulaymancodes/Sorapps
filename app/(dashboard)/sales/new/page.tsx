@@ -25,7 +25,7 @@ export default async function NewSalePage() {
   return (
     <PageShell>
       <PageHeader
-        title="New sale"
+        title={forcedGeo ? 'Add sale' : 'New sale'}
         description={
           forcedGeo
             ? `Territory locked to ${forcedGeo.lga}, ${forcedGeo.state}`

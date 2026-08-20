@@ -24,6 +24,7 @@ import {
   MessageSquare,
   CheckCheck,
   Loader2,
+  PlusCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -105,7 +106,7 @@ const agentNavGroups = [
   {
     label: 'Field work',
     items: [
-      { name: 'Customers', href: '/customers', icon: Users },
+      { name: 'Add sale', href: '/sales/new', icon: PlusCircle },
       { name: 'Sales', href: '/sales', icon: ShoppingCart },
       { name: 'Activations', href: '/activations', icon: MessageSquare },
       { name: 'Calendar', href: '/calendar', icon: Calendar },
@@ -203,7 +204,13 @@ export function DashboardShell({
     }
   }, [remindersOpen])
 
-  const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`)
+  const isActive = (href: string) => {
+    if (href === '/sales') {
+      // Keep Sales list active for /sales and /sales/[id], but not /sales/new
+      return pathname === '/sales' || /^\/sales\/(?!new(?:\/|$))/.test(pathname)
+    }
+    return pathname === href || pathname.startsWith(`${href}/`)
+  }
 
   const unreadReminders = reminders.filter((r) => !isReminderRead(r.id, reads))
   const unreadUrgent = unreadReminders.filter(
