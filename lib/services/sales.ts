@@ -28,6 +28,7 @@ import type {
   SaleStatus,
 } from '@/lib/types/crm'
 import { nextId } from '@/lib/utils/ids'
+import { evaluateDeploymentArea } from '@/lib/utils/gps'
 import {
   addLocalDays,
   buildInstallmentsByInterval,
@@ -81,6 +82,7 @@ function mapSale(
     gps_locked: row.gpsLocked,
     gps_out_of_area: row.gpsOutOfArea,
     site_photo_url: row.sitePhotoUrl || '',
+    created_by_user_id: row.createdByUserId ?? undefined,
   }
 }
 
@@ -322,6 +324,13 @@ export async function createSale(
     throw new Error('Upload a site photo before saving this sale')
   }
 
+  const gpsCheckForNewCustomer = input.new_customer
+    ? evaluateDeploymentArea(input.site_gps.latitude, input.site_gps.longitude, {
+        state: input.new_customer.state,
+        lga: input.new_customer.lga,
+      })
+    : null
+
   let customerId = input.customer_id?.trim() || ''
   if (!customerId && input.new_customer) {
     const created = await createCustomer({
@@ -330,7 +339,7 @@ export async function createSale(
       longitude: input.site_gps.longitude,
       gps_captured_at: new Date(input.site_gps.captured_at),
       gps_locked: true,
-      gps_out_of_area: input.site_gps.out_of_area,
+      gps_out_of_area: gpsCheckForNewCustomer?.out_of_area ?? input.site_gps.out_of_area,
       photo_url: input.site_photo_url.trim(),
     })
     customerId = created.id
@@ -344,6 +353,14 @@ export async function createSale(
       .where(eq(customers.id, customerId))
       .limit(1)
     if (!customer) throw new Error('Customer not found')
+
+    const gpsCheck =
+      gpsCheckForNewCustomer ??
+      evaluateDeploymentArea(input.site_gps.latitude, input.site_gps.longitude, {
+        state: customer.state,
+        lga: customer.lga || '',
+      })
+    const gpsOutOfArea = gpsCheck.out_of_area
 
     const qtyByProduct = new Map<string, number>()
     for (const line of input.items) {
@@ -474,8 +491,9 @@ export async function createSale(
         longitude: input.site_gps.longitude,
         gpsCapturedAt: new Date(input.site_gps.captured_at),
         gpsLocked: true,
-        gpsOutOfArea: Boolean(input.site_gps.out_of_area),
+        gpsOutOfArea: gpsOutOfArea,
         sitePhotoUrl: input.site_photo_url.trim(),
+        createdByUserId: input.created_by_user_id || null,
       })
       .returning()
 

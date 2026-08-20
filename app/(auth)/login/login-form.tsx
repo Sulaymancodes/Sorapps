@@ -11,7 +11,8 @@ import { authClient } from '@/lib/auth-client'
 export function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const next = searchParams.get('next') || '/dashboard'
+  const next = searchParams.get('next') || ''
+  const notice = searchParams.get('notice')
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -35,12 +36,18 @@ export function LoginForm() {
       return
     }
 
-    router.push(next)
+    // Land on home — it routes admin → dashboard, agent → sales
+    router.push(next || '/')
     router.refresh()
   }
 
   return (
     <form onSubmit={onSubmit} className="space-y-5">
+      {notice === 'registration_disabled' && (
+        <p className="rounded-lg border border-border bg-secondary/40 px-3 py-2 text-sm text-muted-foreground">
+          Public registration is closed. Ask an admin to create your agent account.
+        </p>
+      )}
       <div>
         <Label htmlFor="email">Email</Label>
         <Input

@@ -129,6 +129,13 @@ export const customers: Customer[] = Array.from({ length: 120 }, (_, i) => {
     total_purchases: getRandomNumber(500000, 10000000),
     outstanding_balance: getRandomNumber(0, 2000000),
     created_at: sub(MOCK_NOW, { days: getRandomNumber(1, 365) }),
+    is_minor: false,
+    guardian_name: '',
+    guardian_phone: '',
+    guardian_relationship: '',
+    next_of_kin_name: '',
+    next_of_kin_phone: '',
+    next_of_kin_relationship: '',
   }
 })
 

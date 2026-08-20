@@ -1,7 +1,9 @@
 import { redirect } from 'next/navigation'
-import { getSession } from '@/lib/auth-server'
+import { getSession, getSessionAccess } from '@/lib/auth-server'
 
-export default async function Home() {
+export default async function HomePage() {
   const session = await getSession()
-  redirect(session ? '/dashboard' : '/login')
+  if (!session) redirect('/login')
+  const access = getSessionAccess(session)
+  redirect(access.isAdmin ? '/dashboard' : '/sales')
 }

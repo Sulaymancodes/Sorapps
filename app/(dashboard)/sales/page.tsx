@@ -1,16 +1,25 @@
-import { Suspense } from 'react'
-import { requireSession } from '@/lib/auth-server'
+import { getSessionAccess, requireSession } from '@/lib/auth-server'
 import { listCustomers } from '@/lib/services/customers'
 import { listPaymentSchedules, listSales } from '@/lib/services/sales'
+import { matchesAgentTerritory } from '@/lib/utils/territory'
+import { Suspense } from 'react'
 import SalesPage from './sales-page'
 
 export default async function SalesRoutePage() {
   const session = await requireSession()
+  const access = getSessionAccess(session)
   const [sales, customers, schedules] = await Promise.all([
     listSales(),
     listCustomers(),
     listPaymentSchedules(),
   ])
+
+  const scopedCustomers = customers.filter((c) =>
+    matchesAgentTerritory({ state: c.state, lga: c.lga }, access)
+  )
+  const customerIds = new Set(scopedCustomers.map((c) => c.id))
+  const scopedSales = sales.filter((s) => customerIds.has(s.customer_id))
+  const scopedSchedules = schedules.filter((s) => customerIds.has(s.customer_id))
 
   return (
     <Suspense
@@ -21,10 +30,10 @@ export default async function SalesRoutePage() {
       }
     >
       <SalesPage
-        sales={sales}
-        customers={customers}
-        schedules={schedules}
-        isAdmin={session.user.role === 'admin'}
+        sales={scopedSales}
+        customers={scopedCustomers}
+        schedules={scopedSchedules}
+        isAdmin={access.isAdmin}
       />
     </Suspense>
   )

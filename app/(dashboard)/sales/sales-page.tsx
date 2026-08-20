@@ -120,13 +120,28 @@ export default function SalesPage({
 
     if (search) {
       const q = search.toLowerCase()
+      const qDigits = q.replace(/\D/g, '')
       filtered = filtered.filter((s) => {
         const customer = customers.get(s.customer_id)
-        return (
-          s.id.toLowerCase().includes(q) ||
-          customer?.name.toLowerCase().includes(q) ||
-          customer?.email.toLowerCase().includes(q)
-        )
+        const haystack = [
+          s.id,
+          s.status,
+          s.payment_type,
+          s.notes,
+          customer?.id,
+          customer?.name,
+          customer?.email,
+          customer?.phone,
+          customer?.guardian_phone,
+          customer?.nin,
+          customer?.bvn,
+        ]
+        return haystack.some((value) => {
+          const raw = String(value || '')
+          if (raw.toLowerCase().includes(q)) return true
+          if (qDigits.length >= 4 && raw.replace(/\D/g, '').includes(qDigits)) return true
+          return false
+        })
       })
     }
 
@@ -301,7 +316,7 @@ export default function SalesPage({
       <Panel>
         <div className="space-y-4">
           <SearchField
-            placeholder="Search by customer or sale ID…"
+            placeholder="Search sale ID, name, phone, NIN, BVN…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />

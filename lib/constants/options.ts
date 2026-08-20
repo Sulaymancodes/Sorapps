@@ -53,6 +53,16 @@ export const BUSINESS_TYPES = [
   'Household',
 ] as const
 
+export const GUARDIAN_RELATIONSHIPS = [
+  'Parent',
+  'Guardian',
+  'Spouse',
+  'Sibling',
+  'Relative',
+  'Caregiver',
+  'Other',
+] as const
+
 export const INSTALLMENT_WEEK_OPTIONS = [4, 6, 8, 12] as const
 
 export const VAT_RATE = 0.075

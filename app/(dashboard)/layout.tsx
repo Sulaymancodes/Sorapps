@@ -1,7 +1,9 @@
 import { DashboardShell } from '@/components/layout/DashboardShell'
-import { requireSession } from '@/lib/auth-server'
+import { AgentRouteGuard } from '@/components/layout/AgentRouteGuard'
+import { getSessionAccess, requireSession } from '@/lib/auth-server'
 import { listCustomers } from '@/lib/services/customers'
 import { listPaymentReminders } from '@/lib/services/sales'
+import { matchesAgentTerritory } from '@/lib/utils/territory'
 
 export default async function DashboardLayout({
   children,
@@ -9,8 +11,12 @@ export default async function DashboardLayout({
   children: React.ReactNode
 }) {
   const session = await requireSession()
+  const access = getSessionAccess(session)
   const customers = await listCustomers()
-  const reminders = await listPaymentReminders(customers)
+  const scopedCustomers = customers.filter((c) =>
+    matchesAgentTerritory({ state: c.state, lga: c.lga }, access)
+  )
+  const reminders = await listPaymentReminders(scopedCustomers)
 
   const sortedReminders = [...reminders].sort((a, b) => {
     const rank = { overdue: 0, due_today: 1, due_soon: 2 } as const
@@ -24,8 +30,10 @@ export default async function DashboardLayout({
       user={{
         name: session.user.name,
         email: session.user.email,
-        role: session.user.role,
+        role: access.role,
         image: session.user.image,
+        assignedState: access.assignedState,
+        assignedLga: access.assignedLga,
       }}
       reminders={sortedReminders.map((reminder) => ({
         id: reminder.id,
@@ -38,7 +46,7 @@ export default async function DashboardLayout({
         week_number: reminder.week_number,
       }))}
     >
-      {children}
+      <AgentRouteGuard isAgent={access.isAgent}>{children}</AgentRouteGuard>
     </DashboardShell>
   )
 }

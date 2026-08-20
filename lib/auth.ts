@@ -45,13 +45,32 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 8,
+    disableSignUp: true,
   },
   user: {
     additionalFields: {
       role: {
         type: 'string',
         required: false,
-        defaultValue: 'staff',
+        defaultValue: 'agent',
+        input: false,
+      },
+      phone: {
+        type: 'string',
+        required: false,
+        defaultValue: '',
+        input: false,
+      },
+      assignedState: {
+        type: 'string',
+        required: false,
+        defaultValue: '',
+        input: false,
+      },
+      assignedLga: {
+        type: 'string',
+        required: false,
+        defaultValue: '',
         input: false,
       },
     },

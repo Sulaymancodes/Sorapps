@@ -24,6 +24,13 @@ export interface Customer {
   outstanding_balance: number
   created_at: Date
   avatar?: string
+  is_minor: boolean
+  guardian_name: string
+  guardian_phone: string
+  guardian_relationship: string
+  next_of_kin_name: string
+  next_of_kin_phone: string
+  next_of_kin_relationship: string
 }
 
 export interface Product {
@@ -71,6 +78,7 @@ export interface Sale {
   gps_locked?: boolean
   gps_out_of_area?: boolean
   site_photo_url?: string
+  created_by_user_id?: string
 }
 
 export interface InvoiceItem {
@@ -248,6 +256,38 @@ export type CustomerInput = {
   photo_url?: string
   business_type: string
   credit_limit: number
+  is_minor?: boolean
+  guardian_name?: string
+  guardian_phone?: string
+  guardian_relationship?: string
+  next_of_kin_name?: string
+  next_of_kin_phone?: string
+  next_of_kin_relationship?: string
+}
+
+export type DocumentDocType = 'kyc' | 'sales_form' | 'other'
+
+export type CustomerDocument = {
+  id: string
+  customer_id: string
+  sale_id?: string
+  doc_type: DocumentDocType
+  file_name: string
+  content_type: string
+  file_url: string
+  storage_key: string
+  page_number: number
+  uploaded_by_user_id?: string
+  created_at: Date
+}
+
+export type DocumentUploadInput = {
+  file_url: string
+  file_name: string
+  content_type: string
+  storage_key?: string
+  doc_type: DocumentDocType
+  page_number?: number
 }
 
 export type SaleLineInput = {
@@ -262,6 +302,10 @@ export type SaleSiteGpsInput = {
   captured_at: string
   locked: boolean
   out_of_area: boolean
+  deployment_area_id?: string | null
+  deployment_area_name?: string | null
+  subsidy_level?: string | null
+  out_of_area_reason?: string | null
 }
 
 export type SaleInput = {
@@ -278,6 +322,8 @@ export type SaleInput = {
   items: SaleLineInput[]
   site_gps: SaleSiteGpsInput
   site_photo_url: string
+  documents?: DocumentUploadInput[]
+  created_by_user_id?: string
 }
 
 export type ProductInput = {

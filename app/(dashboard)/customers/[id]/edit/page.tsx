@@ -6,6 +6,7 @@ import { PageShell } from '@/components/common/PageShell'
 import { CustomerForm } from '@/components/forms/CustomerForm'
 import { Button } from '@/components/ui/button'
 import { getCustomer } from '@/lib/services/customers'
+import { listCustomerDocuments } from '@/lib/services/documents'
 
 export default async function EditCustomerPage({
   params,
@@ -13,7 +14,10 @@ export default async function EditCustomerPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const customer = await getCustomer(id)
+  const [customer, existingDocuments] = await Promise.all([
+    getCustomer(id),
+    listCustomerDocuments(id),
+  ])
 
   if (!customer) notFound()
 
@@ -31,7 +35,7 @@ export default async function EditCustomerPage({
           </Link>
         }
       />
-      <CustomerForm mode="edit" customer={customer} />
+      <CustomerForm mode="edit" customer={customer} existingDocuments={existingDocuments} />
     </PageShell>
   )
 }

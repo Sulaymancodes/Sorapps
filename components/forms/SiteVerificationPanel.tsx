@@ -6,19 +6,45 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Panel } from '@/components/common/Panel'
 import { getR2StatusAction } from '@/app/actions/uploads'
-import { formatGpsCoord, isWithinNigeria } from '@/lib/utils/gps'
+import { evaluateDeploymentArea, formatGpsCoord } from '@/lib/utils/gps'
+import { SUBSIDY_LABELS, type SubsidyLevel } from '@/lib/constants/deployment-areas'
 import { cn } from '@/lib/utils'
 import type { SaleSiteGpsInput } from '@/lib/types/crm'
 
 type SiteVerificationProps = {
   gps: SaleSiteGpsInput | null
   photoFile: File | null
+  expectedState?: string
+  expectedLga?: string
   onGpsChange: (gps: SaleSiteGpsInput | null) => void
   onPhotoChange: (file: File | null) => void
   error?: string | null
 }
 
-function readLiveGps(): Promise<SaleSiteGpsInput> {
+function buildGpsResult(
+  latitude: number,
+  longitude: number,
+  expectedState?: string,
+  expectedLga?: string
+): SaleSiteGpsInput {
+  const check = evaluateDeploymentArea(latitude, longitude, {
+    state: expectedState,
+    lga: expectedLga,
+  })
+  return {
+    latitude,
+    longitude,
+    captured_at: new Date().toISOString(),
+    locked: true,
+    out_of_area: check.out_of_area,
+    deployment_area_id: check.matched_area?.id ?? null,
+    deployment_area_name: check.matched_area?.name ?? null,
+    subsidy_level: check.subsidy_level,
+    out_of_area_reason: check.reason,
+  }
+}
+
+function readLiveGps(expectedState?: string, expectedLga?: string): Promise<SaleSiteGpsInput> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject(new Error('Geolocation is not supported on this device/browser'))
@@ -26,15 +52,14 @@ function readLiveGps(): Promise<SaleSiteGpsInput> {
     }
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const latitude = position.coords.latitude
-        const longitude = position.coords.longitude
-        resolve({
-          latitude,
-          longitude,
-          captured_at: new Date().toISOString(),
-          locked: true,
-          out_of_area: !isWithinNigeria(latitude, longitude),
-        })
+        resolve(
+          buildGpsResult(
+            position.coords.latitude,
+            position.coords.longitude,
+            expectedState,
+            expectedLga
+          )
+        )
       },
       (err) => {
         reject(
@@ -57,6 +82,8 @@ function readLiveGps(): Promise<SaleSiteGpsInput> {
 export function SiteVerificationPanel({
   gps,
   photoFile,
+  expectedState,
+  expectedLga,
   onGpsChange,
   onPhotoChange,
   error,
@@ -97,10 +124,38 @@ export function SiteVerificationPanel({
     }
   }, [photoFile])
 
+  // Re-evaluate out-of-area when state/LGA changes after GPS is locked
+  useEffect(() => {
+    if (!gps?.locked) return
+    const check = evaluateDeploymentArea(gps.latitude, gps.longitude, {
+      state: expectedState,
+      lga: expectedLga,
+    })
+    const nextReason = check.reason
+    const nextAreaId = check.matched_area?.id ?? null
+    const nextAreaName = check.matched_area?.name ?? null
+    if (
+      check.out_of_area === gps.out_of_area &&
+      nextReason === (gps.out_of_area_reason ?? null) &&
+      nextAreaId === (gps.deployment_area_id ?? null) &&
+      nextAreaName === (gps.deployment_area_name ?? null) &&
+      check.subsidy_level === (gps.subsidy_level ?? null)
+    ) {
+      return
+    }
+    onGpsChange({
+      ...gps,
+      out_of_area: check.out_of_area,
+      deployment_area_id: nextAreaId,
+      deployment_area_name: nextAreaName,
+      subsidy_level: check.subsidy_level,
+      out_of_area_reason: nextReason,
+    })
+  }, [expectedState, expectedLga, gps, onGpsChange])
+
   const openCameraWithGps = () => {
     setLocalError(null)
-    // Start GPS while the camera / picker opens
-    pendingGpsRef.current = readLiveGps()
+    pendingGpsRef.current = readLiveGps(expectedState, expectedLga)
     fileRef.current?.click()
   }
 
@@ -109,7 +164,7 @@ export function SiteVerificationPanel({
     setBusy(true)
     setStatus('Capturing GPS…')
 
-    const gpsPromise = pendingGpsRef.current ?? readLiveGps()
+    const gpsPromise = pendingGpsRef.current ?? readLiveGps(expectedState, expectedLga)
     pendingGpsRef.current = null
 
     try {
@@ -124,7 +179,6 @@ export function SiteVerificationPanel({
         captured_at: new Date().toISOString(),
         locked: true,
       })
-      // Keep file on the form only — Cloudflare upload happens on submit
       onPhotoChange(file)
       setStatus(null)
     } catch (err) {
@@ -141,7 +195,7 @@ export function SiteVerificationPanel({
     setBusy(true)
     setStatus('Recapturing GPS…')
     try {
-      const next = await readLiveGps()
+      const next = await readLiveGps(expectedState, expectedLga)
       onGpsChange(next)
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'GPS recapture failed')
@@ -225,6 +279,13 @@ export function SiteVerificationPanel({
             </p>
           )}
 
+          {!expectedState?.trim() && (
+            <p className="mb-3 rounded-md border border-border/60 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+              Select customer state (and LGA) first so GPS can be checked against the approved
+              deployment area.
+            </p>
+          )}
+
           {status && <p className="mb-3 text-xs text-muted-foreground">{status}</p>}
 
           {previewUrl ? (
@@ -290,11 +351,23 @@ export function SiteVerificationPanel({
                   Captured {new Date(gps.captured_at).toLocaleString()}
                 </span>
               </div>
+              {!gps.out_of_area && gps.deployment_area_name && (
+                <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900 dark:text-emerald-200">
+                  Inside approved area: {gps.deployment_area_name}
+                  {gps.subsidy_level
+                    ? ` · ${SUBSIDY_LABELS[(gps.subsidy_level as SubsidyLevel) || 'none'] || gps.subsidy_level}`
+                    : ''}
+                  {expectedState ? ` · Sale state ${expectedState}` : ''}
+                  {expectedLga ? ` / ${expectedLga}` : ''}
+                </p>
+              )}
               {gps.out_of_area && (
                 <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                   <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
                   <p>
-                    Out-of-area flag: coordinates are outside the Nigeria deployment bounds.
+                    Out-of-area flag:{' '}
+                    {gps.out_of_area_reason ||
+                      'Coordinates are outside the approved deployment area for the selected subsidy zone.'}{' '}
                     Retake on-site or confirm with a supervisor before saving.
                   </p>
                 </div>

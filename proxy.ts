@@ -35,6 +35,10 @@ export async function proxy(request: NextRequest) {
 
   // Cookie presence is optimistic only — do NOT bounce /login|/signup → /dashboard
   // based on a cookie alone (stale cookies cause an infinite 307 loop).
+  if (pathname.startsWith('/signup')) {
+    return NextResponse.redirect(new URL('/login?notice=registration_disabled', request.url))
+  }
+
   if (isProtected && !sessionCookie) {
     const loginUrl = new URL('/login', request.url)
     loginUrl.searchParams.set('next', pathname)

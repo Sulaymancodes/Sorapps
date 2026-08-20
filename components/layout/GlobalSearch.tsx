@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Package, Receipt, Search, ShoppingCart, Users, Loader2 } from 'lucide-react'
+import { Package, Receipt, Search, ShoppingCart, Users, Loader2, Cpu } from 'lucide-react'
 import { SearchField } from '@/components/common/SearchField'
 import { searchCrmAction } from '@/app/actions/search'
 import type { SearchResult, SearchResultType } from '@/lib/services/search'
@@ -12,10 +12,11 @@ const typeMeta: Record<
   SearchResultType,
   { label: string; icon: typeof Users }
 > = {
-  customer: { label: 'Customer', icon: Users },
+  customer: { label: 'Beneficiary', icon: Users },
   product: { label: 'Product', icon: Package },
   invoice: { label: 'Invoice', icon: Receipt },
   sale: { label: 'Sale', icon: ShoppingCart },
+  device: { label: 'Serial', icon: Cpu },
 }
 
 export function GlobalSearch({ className }: { className?: string }) {
@@ -92,7 +93,7 @@ export function GlobalSearch({ className }: { className?: string }) {
             if (query.trim() && results.length > 0) setOpen(true)
           }}
           onKeyDown={onKeyDown}
-          placeholder="Search customers, invoices, products…"
+          placeholder="Search name, phone, NIN, BVN, serial, sale…"
           aria-autocomplete="list"
           aria-controls={listId}
           aria-expanded={open}

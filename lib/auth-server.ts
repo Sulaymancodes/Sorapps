@@ -1,6 +1,7 @@
 import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { auth } from '@/lib/auth'
+import { isAdminRole, isAgentAllowedPath, isAgentRole, normalizeRole } from '@/lib/roles'
 
 export async function getSession() {
   return auth.api.getSession({
@@ -28,8 +29,45 @@ export async function requireSession() {
 
 export async function requireAdmin() {
   const session = await requireSession()
-  if (session.user.role !== 'admin') {
+  if (!isAdminRole(session.user.role)) {
     throw new Error('Admin access required')
   }
   return session
 }
+
+export type SessionUserAccess = {
+  id: string
+  role: ReturnType<typeof normalizeRole>
+  isAdmin: boolean
+  isAgent: boolean
+  assignedState: string
+  assignedLga: string
+  phone: string
+}
+
+export function getSessionAccess(
+  session: Awaited<ReturnType<typeof requireSession>>
+): SessionUserAccess {
+  const role = normalizeRole(session.user.role)
+  return {
+    id: session.user.id,
+    role,
+    isAdmin: role === 'admin',
+    isAgent: role === 'agent',
+    assignedState: (session.user as { assignedState?: string }).assignedState || '',
+    assignedLga: (session.user as { assignedLga?: string }).assignedLga || '',
+    phone: (session.user as { phone?: string }).phone || '',
+  }
+}
+
+/** Redirect agents away from admin-only sections. */
+export async function enforceAgentRouteAccess(pathname: string) {
+  const session = await requireSession()
+  const access = getSessionAccess(session)
+  if (access.isAgent && !isAgentAllowedPath(pathname)) {
+    redirect('/sales')
+  }
+  return { session, access }
+}
+
+export { isAdminRole, isAgentRole }

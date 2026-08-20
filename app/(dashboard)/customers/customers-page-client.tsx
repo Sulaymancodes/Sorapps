@@ -14,7 +14,13 @@ import { NIGERIAN_STATES } from '@/lib/constants/options'
 import { formatCurrency, formatPhone } from '@/lib/utils/formatting'
 import type { Customer } from '@/lib/types/crm'
 
-export function CustomersPageClient({ customers }: { customers: Customer[] }) {
+export function CustomersPageClient({
+  customers,
+  canDelete = false,
+}: {
+  customers: Customer[]
+  canDelete?: boolean
+}) {
   const router = useRouter()
   const [search, setSearch] = useState('')
   const [selectedState, setSelectedState] = useState('')
@@ -37,12 +43,28 @@ export function CustomersPageClient({ customers }: { customers: Customer[] }) {
 
     if (search) {
       const q = search.toLowerCase()
-      filtered = filtered.filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          c.email.toLowerCase().includes(q) ||
-          c.phone.includes(q)
-      )
+      const qDigits = q.replace(/\D/g, '')
+      filtered = filtered.filter((c) => {
+        const haystack = [
+          c.id,
+          c.name,
+          c.email,
+          c.phone,
+          c.guardian_phone,
+          c.next_of_kin_phone,
+          c.nin,
+          c.bvn,
+          c.city,
+          c.state,
+          c.lga,
+        ]
+        return haystack.some((value) => {
+          const raw = String(value || '')
+          if (raw.toLowerCase().includes(q)) return true
+          if (qDigits.length >= 4 && raw.replace(/\D/g, '').includes(qDigits)) return true
+          return false
+        })
+      })
     }
 
     if (selectedState) {
@@ -103,7 +125,7 @@ export function CustomersPageClient({ customers }: { customers: Customer[] }) {
       <Panel>
         <div className="space-y-4">
           <SearchField
-            placeholder="Search by name, email, or phone…"
+            placeholder="Search name, phone, NIN, BVN, or customer ID…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -238,16 +260,18 @@ export function CustomersPageClient({ customers }: { customers: Customer[] }) {
                           Edit
                         </Button>
                       </Link>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        disabled={pending && deletingId === customer.id}
-                        onClick={() => handleDelete(customer)}
-                      >
-                        <Trash2 className="size-3" />
-                        {deletingId === customer.id ? 'Deleting…' : 'Delete'}
-                      </Button>
+                      {canDelete && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          disabled={pending && deletingId === customer.id}
+                          onClick={() => handleDelete(customer)}
+                        >
+                          <Trash2 className="size-3" />
+                          {deletingId === customer.id ? 'Deleting…' : 'Delete'}
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>

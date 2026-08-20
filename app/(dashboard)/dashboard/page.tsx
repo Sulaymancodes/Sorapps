@@ -1,30 +1,22 @@
 import {
-  getDashboardStats,
-  getPaymentStatusSeries,
-  getRevenueSeries,
-  getTopCustomersByRevenue,
-  getTopProductsByRevenue,
-} from '@/lib/services/analytics'
+  getDashboardFilterOptions,
+  getManagementDashboard,
+  parseDashboardFilters,
+} from '@/lib/services/dashboard'
 import { DashboardPageClient } from './dashboard-page-client'
 
-export default async function DashboardPage() {
-  const [stats, revenueData, paymentData, topProducts, topCustomers] = await Promise.all([
-    getDashboardStats(),
-    getRevenueSeries(12),
-    getPaymentStatusSeries(12),
-    getTopProductsByRevenue(10),
-    getTopCustomersByRevenue(10),
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const params = await searchParams
+  const filters = parseDashboardFilters(params)
+
+  const [data, options] = await Promise.all([
+    getManagementDashboard(filters),
+    getDashboardFilterOptions(),
   ])
 
-  return (
-    <DashboardPageClient
-      data={{
-        stats,
-        revenueData,
-        paymentData,
-        topProducts,
-        topCustomers,
-      }}
-    />
-  )
+  return <DashboardPageClient data={data} options={options} />
 }

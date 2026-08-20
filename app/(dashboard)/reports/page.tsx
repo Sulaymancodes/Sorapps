@@ -1,44 +1,30 @@
 import {
-  getInventoryValueByCategory,
-  getOverallStats,
-  getPaymentStatusSeries,
-  getRevenueSeries,
-  getSalesBreakdown,
-  getTopCustomersByRevenue,
-  getTopProductsByRevenue,
-} from '@/lib/services/analytics'
+  getOddyseaReport,
+  parseOddyseaFilters,
+} from '@/lib/services/oddysea'
+import { NIGERIAN_STATES } from '@/lib/constants/options'
+import { APPROVED_DEPLOYMENT_AREAS } from '@/lib/constants/deployment-areas'
 import { ReportsPageClient } from './reports-page-client'
 
-export default async function ReportsPage() {
-  const [
-    stats,
-    revenueData,
-    salesBreakdown,
-    paymentTrend,
-    inventoryValue,
-    topProducts,
-    topCustomers,
-  ] = await Promise.all([
-    getOverallStats(),
-    getRevenueSeries(12),
-    getSalesBreakdown(),
-    getPaymentStatusSeries(12),
-    getInventoryValueByCategory(),
-    getTopProductsByRevenue(10),
-    getTopCustomersByRevenue(10),
-  ])
+export default async function ReportsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const params = await searchParams
+  const filters = parseOddyseaFilters(params)
+  const report = await getOddyseaReport(filters)
 
   return (
     <ReportsPageClient
-      data={{
-        stats,
-        revenueData,
-        salesByStatus: salesBreakdown.by_status,
-        paymentTypeData: salesBreakdown.by_payment_type,
-        paymentTrend,
-        inventoryValue,
-        topProducts,
-        topCustomers,
+      report={report}
+      options={{
+        states: [...NIGERIAN_STATES],
+        deployment_areas: APPROVED_DEPLOYMENT_AREAS.map((a) => ({
+          id: a.id,
+          name: a.name,
+          state: a.state,
+        })),
       }}
     />
   )

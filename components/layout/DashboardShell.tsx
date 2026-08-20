@@ -36,12 +36,15 @@ import {
   markRemindersRead,
   type ReminderReadMap,
 } from '@/lib/reminders/read-state'
+import { isAgentRole, roleLabel as formatRoleLabel } from '@/lib/roles'
 
 export type DashboardUser = {
   name: string
   email: string
   role?: string | null
   image?: string | null
+  assignedState?: string | null
+  assignedLga?: string | null
 }
 
 export type ShellReminder = {
@@ -64,7 +67,7 @@ function initials(name: string) {
     .join('')
 }
 
-const navGroups = [
+const allNavGroups = [
   {
     label: 'Overview',
     items: [
@@ -97,6 +100,20 @@ const navGroups = [
     ],
   },
 ]
+
+const agentNavGroups = [
+  {
+    label: 'Field work',
+    items: [
+      { name: 'Customers', href: '/customers', icon: Users },
+      { name: 'Sales', href: '/sales', icon: ShoppingCart },
+      { name: 'Activations', href: '/activations', icon: MessageSquare },
+      { name: 'Calendar', href: '/calendar', icon: Calendar },
+    ],
+  },
+]
+
+const agentMobileTabs = agentNavGroups[0].items
 
 function LogoMark({ compact = false }: { compact?: boolean }) {
   return (
@@ -226,9 +243,13 @@ export function DashboardShell({
     router.refresh()
   }
 
-  const roleLabel = user.role
-    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
-    : 'Staff'
+  const roleLabel = formatRoleLabel(user.role)
+  const isAgent = isAgentRole(user.role)
+  const navGroups = isAgent ? agentNavGroups : allNavGroups
+  const territoryLabel =
+    isAgent && user.assignedState
+      ? [user.assignedLga, user.assignedState].filter(Boolean).join(', ')
+      : null
 
   const sidebarContent = (compact: boolean) => (
     <>
@@ -360,57 +381,75 @@ export function DashboardShell({
         {sidebarContent(collapsed)}
       </aside>
 
-      {/* Mobile drawer */}
-      <div
-        className={cn(
-          'fixed inset-0 z-50 md:hidden',
-          mobileOpen ? 'pointer-events-auto' : 'pointer-events-none'
-        )}
-      >
+      {/* Mobile drawer — admins only (agents use bottom tabs) */}
+      {!isAgent && (
         <div
           className={cn(
-            'absolute inset-0 bg-black/50 backdrop-blur-[2px] transition-opacity',
-            mobileOpen ? 'opacity-100' : 'opacity-0'
-          )}
-          onClick={() => setMobileOpen(false)}
-        />
-        <aside
-          className={cn(
-            'absolute inset-y-0 left-0 flex w-[280px] flex-col bg-sidebar text-sidebar-foreground shadow-2xl transition-transform duration-300',
-            mobileOpen ? 'translate-x-0' : '-translate-x-full'
+            'fixed inset-0 z-50 md:hidden',
+            mobileOpen ? 'pointer-events-auto' : 'pointer-events-none'
           )}
         >
-          <div className="absolute right-3 top-3">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setMobileOpen(false)}
-              className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
-              aria-label="Close menu"
-            >
-              <X className="size-4" />
-            </Button>
-          </div>
-          {sidebarContent(false)}
-        </aside>
-      </div>
+          <div
+            className={cn(
+              'absolute inset-0 bg-black/50 backdrop-blur-[2px] transition-opacity',
+              mobileOpen ? 'opacity-100' : 'opacity-0'
+            )}
+            onClick={() => setMobileOpen(false)}
+          />
+          <aside
+            className={cn(
+              'absolute inset-y-0 left-0 flex w-[280px] flex-col bg-sidebar text-sidebar-foreground shadow-2xl transition-transform duration-300',
+              mobileOpen ? 'translate-x-0' : '-translate-x-full'
+            )}
+          >
+            <div className="absolute right-3 top-3">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setMobileOpen(false)}
+                className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                aria-label="Close menu"
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+            {sidebarContent(false)}
+          </aside>
+        </div>
+      )}
 
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border/70 bg-surface/80 px-4 backdrop-blur-md sm:px-6">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="md:hidden"
-            onClick={() => setMobileOpen(true)}
-            aria-label="Open menu"
-          >
-            <Menu className="size-5" />
-          </Button>
+          {!isAgent && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="md:hidden"
+              onClick={() => setMobileOpen(true)}
+              aria-label="Open menu"
+            >
+              <Menu className="size-5" />
+            </Button>
+          )}
 
           <GlobalSearch className="hidden md:block" />
 
           <div className="ml-auto flex items-center gap-2">
+            {isAgent && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="md:hidden"
+                aria-label="Settings"
+                aria-current={isActive('/settings') ? 'page' : undefined}
+                onClick={() => navigateTo('/settings')}
+              >
+                <Settings
+                  className={cn('size-5', isActive('/settings') && 'text-primary')}
+                />
+              </Button>
+            )}
             <div className="relative" ref={remindersRef}>
               <Button
                 variant="ghost"
@@ -528,16 +567,18 @@ export function DashboardShell({
                     >
                       Open calendar
                     </button>
-                    <button
-                      type="button"
-                      className="text-xs font-medium text-muted-foreground hover:text-foreground hover:underline"
-                      onClick={() => {
-                        setRemindersOpen(false)
-                        navigateTo('/payments')
-                      }}
-                    >
-                      View payments
-                    </button>
+                    {!isAgent && (
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-muted-foreground hover:text-foreground hover:underline"
+                        onClick={() => {
+                          setRemindersOpen(false)
+                          navigateTo('/payments')
+                        }}
+                      >
+                        View payments
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -548,13 +589,21 @@ export function DashboardShell({
               </div>
               <div className="hidden min-w-0 leading-tight sm:block">
                 <p className="truncate text-sm font-medium">{user.name}</p>
-                <p className="text-[11px] text-muted-foreground">{roleLabel}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {roleLabel}
+                  {territoryLabel ? ` · ${territoryLabel}` : ''}
+                </p>
               </div>
             </div>
           </div>
         </header>
 
-        <main className="relative flex-1 overflow-y-auto">
+        <main
+          className={cn(
+            'relative flex-1 overflow-y-auto',
+            isAgent && 'pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0'
+          )}
+        >
           {showNavLoading && (
             <div className="absolute inset-0 z-20 flex items-start justify-center bg-background/40 pt-24 backdrop-blur-[1px]">
               <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
@@ -566,6 +615,49 @@ export function DashboardShell({
           {children}
         </main>
       </div>
+
+      {/* Agent mobile bottom tabs */}
+      {isAgent && (
+        <nav
+          className="fixed inset-x-0 bottom-0 z-40 border-t border-border/80 bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden"
+          aria-label="Agent navigation"
+        >
+          <ul className="grid grid-cols-4">
+            {agentMobileTabs.map((tab) => {
+              const Icon = tab.icon
+              const active = isActive(tab.href)
+              return (
+                <li key={tab.href}>
+                  <button
+                    type="button"
+                    onClick={() => navigateTo(tab.href)}
+                    aria-current={active ? 'page' : undefined}
+                    className={cn(
+                      'relative flex w-full flex-col items-center gap-0.5 px-1 pb-2 pt-2.5 text-[10px] font-medium transition-colors',
+                      active
+                        ? 'text-primary'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {active && (
+                      <span className="absolute inset-x-4 top-0 h-0.5 rounded-full bg-primary" />
+                    )}
+                    <span
+                      className={cn(
+                        'flex size-9 items-center justify-center rounded-xl transition-colors',
+                        active && 'bg-primary/10'
+                      )}
+                    >
+                      <Icon className={cn('size-5', active && 'stroke-[2.25]')} />
+                    </span>
+                    <span className={cn(active && 'font-semibold')}>{tab.name}</span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </nav>
+      )}
     </div>
   )
 }

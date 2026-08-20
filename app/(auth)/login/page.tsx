@@ -1,14 +1,14 @@
-import Link from 'next/link'
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { AuthShell } from '@/components/auth/AuthShell'
-import { getSession } from '@/lib/auth-server'
+import { getSession, getSessionAccess } from '@/lib/auth-server'
 import { LoginForm } from './login-form'
 
 export default async function LoginPage() {
   const session = await getSession()
   if (session) {
-    redirect('/dashboard')
+    const access = getSessionAccess(session)
+    redirect(access.isAdmin ? '/dashboard' : '/sales')
   }
 
   return (
@@ -16,12 +16,9 @@ export default async function LoginPage() {
       title="Sorapps"
       subtitle="Sign in to your solar CRM workspace"
       footer={
-        <>
-          Don&apos;t have an account?{' '}
-          <Link href="/signup" className="font-medium text-primary hover:underline">
-            Create one
-          </Link>
-        </>
+        <span className="text-muted-foreground">
+          Accounts are created by an admin — contact your supervisor for access.
+        </span>
       }
     >
       <Suspense fallback={<div className="h-48 animate-pulse rounded-lg bg-muted/50" />}>

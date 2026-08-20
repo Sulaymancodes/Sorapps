@@ -2,22 +2,66 @@
 
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
-import { requireAdmin, requireSession } from '@/lib/auth-server'
+import { getSessionAccess, requireAdmin, requireSession } from '@/lib/auth-server'
+import { createCustomerDocuments } from '@/lib/services/documents'
+import { getCustomer } from '@/lib/services/customers'
 import { createSale, deleteSale } from '@/lib/services/sales'
-import type { Invoice, PaymentSchedule, Sale } from '@/lib/types/crm'
+import { assertAgentTerritory } from '@/lib/utils/territory'
+import type { DocumentUploadInput, Invoice, PaymentSchedule, Sale } from '@/lib/types/crm'
 
-const customerInputSchema = z.object({
-  name: z.string().min(2),
-  email: z.string().email().or(z.literal('')).optional(),
-  phone: z.string().min(10),
-  nin: z.string().optional(),
-  bvn: z.string().optional(),
-  address: z.string().min(1),
-  city: z.string().min(1),
-  state: z.string().min(1),
-  lga: z.string().optional(),
-  business_type: z.string().min(1),
-  credit_limit: z.coerce.number().min(0).default(0),
+const customerInputSchema = z
+  .object({
+    name: z.string().min(2),
+    email: z.string().email().or(z.literal('')).optional(),
+    phone: z.string().optional().default(''),
+    nin: z.string().optional(),
+    bvn: z.string().optional(),
+    address: z.string().min(1),
+    city: z.string().min(1),
+    state: z.string().min(1),
+    lga: z.string().optional(),
+    business_type: z.string().min(1),
+    credit_limit: z.coerce.number().min(0).default(0),
+    is_minor: z.boolean().optional().default(false),
+    guardian_name: z.string().optional().default(''),
+    guardian_phone: z.string().optional().default(''),
+    guardian_relationship: z.string().optional().default(''),
+    next_of_kin_name: z.string().optional().default(''),
+    next_of_kin_phone: z.string().optional().default(''),
+    next_of_kin_relationship: z.string().optional().default(''),
+  })
+  .superRefine((data, ctx) => {
+    if (data.is_minor) {
+      if (!(data.guardian_name || '').trim()) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Parent/guardian name is required for minors',
+          path: ['guardian_name'],
+        })
+      }
+      if ((data.guardian_phone || '').trim().length < 10) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Parent/guardian phone is required for minors',
+          path: ['guardian_phone'],
+        })
+      }
+    } else if ((data.phone || '').trim().length < 10) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Phone is required',
+        path: ['phone'],
+      })
+    }
+  })
+
+const documentSchema = z.object({
+  file_url: z.string().url(),
+  file_name: z.string().min(1),
+  content_type: z.string().min(1),
+  storage_key: z.string().optional(),
+  doc_type: z.enum(['kyc', 'sales_form', 'other']),
+  page_number: z.number().int().positive().optional(),
 })
 
 const saleSchema = z
@@ -47,8 +91,13 @@ const saleSchema = z
       captured_at: z.string().min(1),
       locked: z.literal(true),
       out_of_area: z.boolean(),
+      deployment_area_id: z.string().nullable().optional(),
+      deployment_area_name: z.string().nullable().optional(),
+      subsidy_level: z.string().nullable().optional(),
+      out_of_area_reason: z.string().nullable().optional(),
     }),
     site_photo_url: z.string().url('Upload a site photo'),
+    documents: z.array(documentSchema).optional(),
   })
   .refine((data) => Boolean(data.customer_id?.trim() || data.new_customer), {
     message: 'Select or create a customer',
@@ -71,24 +120,49 @@ export type ActionResult<T = void> =
 export async function createSaleAction(
   input: z.infer<typeof saleSchema>
 ): Promise<ActionResult<{ sale: Sale; invoice: Invoice; schedule: PaymentSchedule }>> {
-  await requireSession()
+  const session = await requireSession()
   const parsed = saleSchema.safeParse(input)
   if (!parsed.success) {
     return { success: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' }
   }
 
   try {
+    const access = getSessionAccess(session)
+    if (parsed.data.new_customer) {
+      assertAgentTerritory(
+        { state: parsed.data.new_customer.state, lga: parsed.data.new_customer.lga },
+        access
+      )
+    } else if (parsed.data.customer_id) {
+      const existing = await getCustomer(parsed.data.customer_id)
+      if (!existing) return { success: false, error: 'Customer not found' }
+      assertAgentTerritory({ state: existing.state, lga: existing.lga }, access)
+    }
+
+    const { documents, ...saleData } = parsed.data
     const result = await createSale({
-      ...parsed.data,
+      ...saleData,
       customer_id: parsed.data.customer_id || undefined,
+      created_by_user_id: session.user.id,
       new_customer: parsed.data.new_customer
         ? {
             ...parsed.data.new_customer,
             email: parsed.data.new_customer.email || '',
+            phone: parsed.data.new_customer.phone || '',
             credit_limit: parsed.data.new_customer.credit_limit ?? 0,
           }
         : undefined,
     })
+
+    if (documents?.length) {
+      await createCustomerDocuments({
+        customer_id: result.sale.customer_id,
+        sale_id: result.sale.id,
+        documents: documents as DocumentUploadInput[],
+        uploaded_by_user_id: session.user.id,
+      })
+    }
+
     revalidatePath('/sales')
     revalidatePath('/customers')
     revalidatePath('/products')
@@ -107,19 +181,8 @@ export async function createSaleAction(
 }
 
 export async function deleteSaleAction(id: string): Promise<ActionResult> {
-  try {
-    await requireAdmin()
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Admin access required',
-    }
-  }
-
-  if (!id?.trim()) {
-    return { success: false, error: 'Sale id is required' }
-  }
-
+  await requireAdmin()
+  if (!id?.trim()) return { success: false, error: 'Sale id is required' }
   try {
     await deleteSale(id)
     revalidatePath('/sales')
@@ -130,8 +193,7 @@ export async function deleteSaleAction(id: string): Promise<ActionResult> {
     revalidatePath('/payments')
     revalidatePath('/dashboard')
     revalidatePath('/warranty')
-    revalidatePath('/reports')
-    revalidatePath('/calendar')
+    revalidatePath('/activations')
     return { success: true, data: undefined }
   } catch (error) {
     return {

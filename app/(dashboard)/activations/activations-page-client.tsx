@@ -19,7 +19,14 @@ import { calculateValidityDays } from '@/lib/paygo/validity'
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils/formatting'
 import { cn } from '@/lib/utils'
 
-type CustomerOption = { id: string; name: string; phone: string; city: string }
+type CustomerOption = {
+  id: string
+  name: string
+  phone: string
+  city: string
+  is_minor?: boolean
+  guardian_phone?: string
+}
 type SaleOption = {
   id: string
   customer_id: string
@@ -75,7 +82,9 @@ function statusClass(status: string) {
 }
 
 function customerOptionLabel(c: CustomerOption) {
-  return `${c.name} · ${c.phone}${c.city ? ` · ${c.city}` : ''}`
+  const phone = c.phone || c.guardian_phone || 'no phone'
+  const tag = c.is_minor ? ' · minor' : ''
+  return `${c.name} · ${phone}${c.city ? ` · ${c.city}` : ''}${tag}`
 }
 
 export function ActivationsPageClient({
@@ -197,7 +206,7 @@ export function ActivationsPageClient({
     }
 
     const customer = customers.find((c) => c.id === id)
-    setPhone(customer?.phone || '')
+    setPhone(customer?.phone || customer?.guardian_phone || '')
 
     const sale =
       sales

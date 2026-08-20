@@ -16,7 +16,7 @@ export const customers = pgTable(
     id: text('id').primaryKey(),
     name: text('name').notNull(),
     email: text('email').notNull().default(''),
-    phone: text('phone').notNull(),
+    phone: text('phone').notNull().default(''),
     nin: text('nin').notNull().default(''),
     bvn: text('bvn').notNull().default(''),
     address: text('address').notNull(),
@@ -34,12 +34,21 @@ export const customers = pgTable(
     totalPurchases: integer('total_purchases').notNull().default(0),
     outstandingBalance: integer('outstanding_balance').notNull().default(0),
     avatar: text('avatar'),
+    /** Minor / no personal phone — use guardian for SMS & contact */
+    isMinor: boolean('is_minor').notNull().default(false),
+    guardianName: text('guardian_name').notNull().default(''),
+    guardianPhone: text('guardian_phone').notNull().default(''),
+    guardianRelationship: text('guardian_relationship').notNull().default(''),
+    nextOfKinName: text('next_of_kin_name').notNull().default(''),
+    nextOfKinPhone: text('next_of_kin_phone').notNull().default(''),
+    nextOfKinRelationship: text('next_of_kin_relationship').notNull().default(''),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [
     index('customers_phone_idx').on(table.phone),
     index('customers_nin_idx').on(table.nin),
     index('customers_bvn_idx').on(table.bvn),
+    index('customers_guardian_phone_idx').on(table.guardianPhone),
   ]
 )
 
@@ -90,9 +99,15 @@ export const sales = pgTable(
     gpsLocked: boolean('gps_locked').notNull().default(false),
     gpsOutOfArea: boolean('gps_out_of_area').notNull().default(false),
     sitePhotoUrl: text('site_photo_url').notNull().default(''),
+    createdByUserId: text('created_by_user_id'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
-  (table) => [index('sales_customer_id_idx').on(table.customerId)]
+  (table) => [
+    index('sales_customer_id_idx').on(table.customerId),
+    index('sales_created_by_user_id_idx').on(table.createdByUserId),
+    index('sales_date_idx').on(table.date),
+    index('sales_status_idx').on(table.status),
+  ]
 )
 
 export const saleItems = pgTable(
@@ -335,6 +350,30 @@ export const activationCodes = pgTable(
   ]
 )
 
+/** Physical KYC / sales form uploads (JPG, PNG, PDF) */
+export const customerDocuments = pgTable(
+  'customer_documents',
+  {
+    id: text('id').primaryKey(),
+    customerId: text('customer_id')
+      .notNull()
+      .references(() => customers.id, { onDelete: 'cascade' }),
+    saleId: text('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+    docType: text('doc_type').notNull().default('kyc'), // kyc | sales_form | other
+    fileName: text('file_name').notNull(),
+    contentType: text('content_type').notNull(),
+    fileUrl: text('file_url').notNull(),
+    storageKey: text('storage_key').notNull().default(''),
+    pageNumber: integer('page_number').notNull().default(1),
+    uploadedByUserId: text('uploaded_by_user_id'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('customer_documents_customer_id_idx').on(table.customerId),
+    index('customer_documents_sale_id_idx').on(table.saleId),
+  ]
+)
+
 export const productsRelations = relations(products, ({ many }) => ({
   saleItems: many(saleItems),
   inventoryMovements: many(inventoryMovements),
@@ -345,6 +384,18 @@ export const customersRelations = relations(customers, ({ many }) => ({
   sales: many(sales),
   warranties: many(warranties),
   payments: many(payments),
+  documents: many(customerDocuments),
+}))
+
+export const customerDocumentsRelations = relations(customerDocuments, ({ one }) => ({
+  customer: one(customers, {
+    fields: [customerDocuments.customerId],
+    references: [customers.id],
+  }),
+  sale: one(sales, {
+    fields: [customerDocuments.saleId],
+    references: [sales.id],
+  }),
 }))
 
 export const salesRelations = relations(sales, ({ one, many }) => ({
@@ -357,6 +408,7 @@ export const salesRelations = relations(sales, ({ one, many }) => ({
   schedule: one(paymentSchedules),
   warranties: many(warranties),
   payments: many(payments),
+  documents: many(customerDocuments),
 }))
 
 export const saleItemsRelations = relations(saleItems, ({ one }) => ({
