@@ -12,6 +12,8 @@ function mapProduct(row: typeof products.$inferSelect): Product {
     category: row.category,
     brand: row.brand,
     description: row.description,
+    model_number: row.modelNumber || '',
+    pv_capacity_wp: row.pvCapacityWp || 0,
     price: row.price,
     cost: row.cost,
     stock: row.stock,
@@ -44,6 +46,11 @@ export async function createProduct(input: ProductInput): Promise<Product> {
     throw new Error('A product with this SKU already exists')
   }
 
+  const modelNumber = (input.model_number || '').trim() || sku
+  const pvCapacityWp = Math.max(0, Math.round(Number(input.pv_capacity_wp) || 0))
+  if (!modelNumber) throw new Error('Approved model number is required')
+  if (pvCapacityWp <= 0) throw new Error('PV capacity (W) must be greater than 0')
+
   const now = new Date()
   const [row] = await db
     .insert(products)
@@ -55,6 +62,8 @@ export async function createProduct(input: ProductInput): Promise<Product> {
       brand: input.brand,
       description:
         input.description.trim() || `Professional grade ${input.category.toLowerCase()}`,
+      modelNumber,
+      pvCapacityWp,
       price: Math.max(0, Math.round(input.price)),
       cost: Math.max(0, Math.round(input.cost)),
       stock: Math.max(0, Math.floor(input.stock)),
@@ -82,6 +91,11 @@ export async function updateProduct(
     throw new Error('A product with this SKU already exists')
   }
 
+  const modelNumber = (input.model_number || '').trim() || sku
+  const pvCapacityWp = Math.max(0, Math.round(Number(input.pv_capacity_wp) || 0))
+  if (!modelNumber) throw new Error('Approved model number is required')
+  if (pvCapacityWp <= 0) throw new Error('PV capacity (W) must be greater than 0')
+
   const [row] = await db
     .update(products)
     .set({
@@ -90,6 +104,8 @@ export async function updateProduct(
       category: input.category,
       brand: input.brand,
       description: input.description.trim(),
+      modelNumber,
+      pvCapacityWp,
       price: Math.max(0, Math.round(input.price)),
       cost: Math.max(0, Math.round(input.cost)),
       stock: Math.max(0, Math.floor(input.stock)),

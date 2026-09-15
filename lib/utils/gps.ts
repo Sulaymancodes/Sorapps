@@ -211,3 +211,18 @@ export function isOutOfDeploymentArea(
 export function formatGpsCoord(value: number, digits = 6): string {
   return value.toFixed(digits)
 }
+
+/** Round to ~0.11m precision — DARES requires non-identical installation points. */
+export function gpsKey(lat: number, lng: number, digits = 6): string {
+  return `${lat.toFixed(digits)},${lng.toFixed(digits)}`
+}
+
+export function sameGpsPoint(
+  aLat: number,
+  aLng: number,
+  bLat: number,
+  bLng: number,
+  digits = 6
+): boolean {
+  return gpsKey(aLat, aLng, digits) === gpsKey(bLat, bLng, digits)
+}

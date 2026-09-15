@@ -34,12 +34,20 @@ export type OddyseaReport = {
     beneficiary_id: string
     name: string
     phone: string
+    alternate_phone: string
+    gender: string
+    customer_category: string
+    customer_type: string
     nin: string
     bvn: string
     is_minor: boolean
     guardian_name: string
     guardian_phone: string
     address: string
+    address_house_number: string
+    address_building_features: string
+    address_street: string
+    address_landmark: string
     city: string
     lga: string
     state: string
@@ -48,6 +56,11 @@ export type OddyseaReport = {
     sale_id: string
     sale_date: string
     payment_type: string
+    dares_type_of_payment: string
+    dares_payment_plan: string
+    retail_cost_ngn: number
+    cost_to_end_user_ngn: number
+    downpayment_amount_ngn: number
     sale_status: string
     total_amount: number
   }[]
@@ -106,6 +119,8 @@ export type OddyseaReport = {
     beneficiary_name: string
     product_name: string
     product_sku: string
+    model_number: string
+    pv_capacity_wp: number
     serial_number: string
     warranty_id: string
     state: string

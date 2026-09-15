@@ -28,7 +28,7 @@ import type {
   SaleStatus,
 } from '@/lib/types/crm'
 import { nextId } from '@/lib/utils/ids'
-import { evaluateDeploymentArea } from '@/lib/utils/gps'
+import { evaluateDeploymentArea, sameGpsPoint } from '@/lib/utils/gps'
 import {
   buildInstallmentsByInterval,
   isValidIntervalDays,
@@ -80,6 +80,11 @@ function mapSale(
     items,
     profit: row.profit,
     notes: row.notes,
+    dares_type_of_payment: row.daresTypeOfPayment || '',
+    dares_payment_plan: row.daresPaymentPlan || '',
+    retail_cost_ngn: row.retailCostNgn || 0,
+    cost_to_end_user_ngn: row.costToEndUserNgn || 0,
+    downpayment_amount_ngn: row.downpaymentAmountNgn || 0,
     latitude: row.latitude ?? null,
     longitude: row.longitude ?? null,
     gps_captured_at: row.gpsCapturedAt ?? null,
@@ -328,6 +333,21 @@ export async function createSale(
     throw new Error('Upload a site photo before saving this sale')
   }
 
+  if (!(input.dares_type_of_payment || '').trim()) {
+    throw new Error('Select DARES type of payment')
+  }
+  if (!(input.dares_payment_plan || '').trim()) {
+    throw new Error('Select DARES payment plan')
+  }
+  const costToEndUser = Math.max(0, Math.round(Number(input.cost_to_end_user_ngn) || 0))
+  if (costToEndUser <= 0) {
+    throw new Error('Enter cost to end user (NGN)')
+  }
+  const downpayment = Math.max(0, Math.round(Number(input.downpayment_amount_ngn) || 0))
+  if (input.payment_type === 'installment' && downpayment < 0) {
+    throw new Error('Enter a valid downpayment amount')
+  }
+
   // Validate PAYGO dates before any DB writes (avoids orphan customers on failure)
   let installment_interval_days: number | null = null
   let plan_end_date: Date | null = null
@@ -392,6 +412,25 @@ export async function createSale(
       .limit(1)
     if (!customer) throw new Error('Customer not found')
 
+    if (!(customer.gender || '').trim()) {
+      throw new Error('Update this customer with gender before creating a claimable sale')
+    }
+    if (!(customer.customerCategory || '').trim()) {
+      throw new Error('Update this customer with customer category before creating a claimable sale')
+    }
+    if (!(customer.customerType || '').trim()) {
+      throw new Error('Update this customer with customer type before creating a claimable sale')
+    }
+    if (
+      !(customer.addressBuildingFeatures || '').trim() ||
+      !(customer.addressStreet || '').trim() ||
+      !(customer.addressLandmark || '').trim()
+    ) {
+      throw new Error(
+        'Update this customer with structured address (building, street, landmark) before creating a claimable sale'
+      )
+    }
+
     const gpsCheck =
       gpsCheckForNewCustomer ??
       evaluateDeploymentArea(input.site_gps.latitude, input.site_gps.longitude, {
@@ -399,6 +438,30 @@ export async function createSale(
         lga: customer.lga || '',
       })
     const gpsOutOfArea = gpsCheck.out_of_area
+
+    // DARES: installation GPS must be unique (even within the same compound)
+    const priorGpsRows = await tx
+      .select({
+        id: sales.id,
+        latitude: sales.latitude,
+        longitude: sales.longitude,
+      })
+      .from(sales)
+    for (const prior of priorGpsRows) {
+      if (prior.latitude == null || prior.longitude == null) continue
+      if (
+        sameGpsPoint(
+          input.site_gps.latitude,
+          input.site_gps.longitude,
+          prior.latitude,
+          prior.longitude
+        )
+      ) {
+        throw new Error(
+          `Site GPS matches an existing installation (${prior.id}). Move a few meters and recapture — points cannot be identical.`
+        )
+      }
+    }
 
     const qtyByProduct = new Map<string, number>()
     for (const line of input.items) {
@@ -481,25 +544,52 @@ export async function createSale(
         ? `Full payment — ${customer.businessType}`
         : `PAYGO every ${installment_interval_days} days through ${plan_end_date!.toLocaleDateString('en-NG')} — ${customer.businessType}`)
 
+    const retailCost = Math.max(
+      0,
+      Math.round(Number(input.retail_cost_ngn) || total_amount)
+    )
+    const amountPaidAtSale = isFullyPaid ? total_amount : downpayment
+
+    for (const item of items) {
+      const product = productMap.get(item.product_id)!
+      if (!(product.modelNumber || '').trim() && !(product.sku || '').trim()) {
+        throw new Error(`Product ${product.name} is missing an approved model number`)
+      }
+      if (!product.pvCapacityWp || product.pvCapacityWp <= 0) {
+        throw new Error(
+          `Product ${product.name} needs PV capacity (W) set in Products before claiming`
+        )
+      }
+    }
+
     const [saleRow] = await tx
       .insert(sales)
       .values({
         id: saleId,
         customerId,
         date: now,
-        status: isFullyPaid ? 'paid' : 'pending_payment',
+        status: isFullyPaid
+          ? 'paid'
+          : amountPaidAtSale > 0
+            ? 'partial'
+            : 'pending_payment',
         paymentType: payment_type,
         paymentMethod: payment_method,
         installmentWeeks: installment_weeks,
         installmentIntervalDays: installment_interval_days,
         planEndDate: plan_end_date,
         totalAmount: total_amount,
-        amountPaid: isFullyPaid ? total_amount : 0,
+        amountPaid: amountPaidAtSale,
         discountPercent: discount_percent,
         vatAmount: vat_amount,
         transportCost: transport_cost,
         profit,
         notes,
+        daresTypeOfPayment: (input.dares_type_of_payment || '').trim(),
+        daresPaymentPlan: (input.dares_payment_plan || '').trim(),
+        retailCostNgn: retailCost,
+        costToEndUserNgn: costToEndUser,
+        downpaymentAmountNgn: isFullyPaid ? total_amount : downpayment,
         latitude: input.site_gps.latitude,
         longitude: input.site_gps.longitude,
         gpsCapturedAt: new Date(input.site_gps.captured_at),
@@ -582,7 +672,7 @@ export async function createSale(
         installmentIntervalDays: installment_interval_days,
         planEndDate: plan_end_date,
         totalAmount: total_amount,
-        paidAmount: isFullyPaid ? total_amount : 0,
+        paidAmount: amountPaidAtSale,
         nextDueDate: isFullyPaid ? null : installmentList[0]?.due_date ?? null,
       })
       .returning()
@@ -601,7 +691,7 @@ export async function createSale(
       }))
     )
 
-    if (isFullyPaid) {
+    if (isFullyPaid || (!isFullyPaid && downpayment > 0)) {
       const existingPaymentIds = await tx.select({ id: payments.id }).from(payments)
       const paymentId = nextId(
         'PAY',
@@ -609,6 +699,7 @@ export async function createSale(
         6
       )
       const primaryInst = installmentList[0]
+      const payAmount = isFullyPaid ? total_amount : downpayment
       await tx.insert(payments).values({
         id: paymentId,
         invoiceId,
@@ -616,7 +707,7 @@ export async function createSale(
         customerId,
         scheduleId,
         installmentId: primaryInst?.id ?? null,
-        amount: total_amount,
+        amount: payAmount,
         date: now,
         method: payment_method,
         reference: paymentId,
@@ -624,10 +715,27 @@ export async function createSale(
         status: 'success',
         paymentType: payment_type,
         weekNumber: primaryInst?.week_number ?? 1,
-        isPartial: false,
-        expectedAmount: total_amount,
-        notes: 'Recorded at sale creation',
+        isPartial: !isFullyPaid,
+        expectedAmount: isFullyPaid ? total_amount : primaryInst?.amount ?? payAmount,
+        notes: isFullyPaid ? 'Recorded at sale creation' : 'Downpayment at sale creation',
       })
+
+      if (!isFullyPaid && primaryInst) {
+        const paidOnFirst = Math.min(payAmount, primaryInst.amount)
+        await tx
+          .update(installments)
+          .set({
+            paidAmount: paidOnFirst,
+            paidDate: paidOnFirst >= primaryInst.amount ? now : null,
+            status:
+              paidOnFirst >= primaryInst.amount
+                ? 'paid'
+                : paidOnFirst > 0
+                  ? 'partial'
+                  : 'pending',
+          })
+          .where(eq(installments.id, primaryInst.id))
+      }
     }
 
     let movCounter = Math.max(

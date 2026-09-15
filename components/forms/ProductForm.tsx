@@ -45,6 +45,8 @@ export function ProductForm({ product, mode = 'create' }: ProductFormProps) {
       category: product?.category || '',
       brand: product?.brand || '',
       description: product?.description || '',
+      model_number: product?.model_number || product?.sku || '',
+      pv_capacity_wp: product?.pv_capacity_wp || 0,
       price: product?.price || 0,
       cost: product?.cost || 0,
       stock: product?.stock ?? 0,
@@ -70,6 +72,14 @@ export function ProductForm({ product, mode = 'create' }: ProductFormProps) {
       setError('brand', { message: 'Enter a brand' })
       return
     }
+    if (!(values.model_number || '').trim()) {
+      setError('model_number', { message: 'Enter a model number' })
+      return
+    }
+    if (Number(values.pv_capacity_wp) <= 0) {
+      setError('pv_capacity_wp', { message: 'Enter PV capacity in watts' })
+      return
+    }
     if (Number(values.price) < 0 || Number(values.cost) < 0) {
       setError('price', { message: 'Price and cost cannot be negative' })
       return
@@ -81,6 +91,8 @@ export function ProductForm({ product, mode = 'create' }: ProductFormProps) {
       category: values.category.trim(),
       brand: values.brand.trim(),
       description: values.description.trim(),
+      model_number: (values.model_number || '').trim(),
+      pv_capacity_wp: Number(values.pv_capacity_wp) || 0,
       price: Number(values.price) || 0,
       cost: Number(values.cost) || 0,
       stock: Math.max(0, Math.floor(Number(values.stock) || 0)),
@@ -127,6 +139,33 @@ export function ProductForm({ product, mode = 'create' }: ProductFormProps) {
               {...register('sku')}
             />
             {errors.sku && <p className="mt-1 text-xs text-destructive">{errors.sku.message}</p>}
+          </div>
+
+          <div>
+            <Label htmlFor="model_number">Model number (DARES Model)</Label>
+            <Input
+              id="model_number"
+              placeholder="e.g. SP-550M"
+              {...register('model_number')}
+            />
+            {errors.model_number && (
+              <p className="mt-1 text-xs text-destructive">{errors.model_number.message}</p>
+            )}
+          </div>
+
+          <div>
+            <Label htmlFor="pv_capacity_wp">PV capacity (W)</Label>
+            <Input
+              id="pv_capacity_wp"
+              type="number"
+              min={0}
+              step={1}
+              placeholder="e.g. 550"
+              {...register('pv_capacity_wp', { valueAsNumber: true })}
+            />
+            {errors.pv_capacity_wp && (
+              <p className="mt-1 text-xs text-destructive">{errors.pv_capacity_wp.message}</p>
+            )}
           </div>
 
           <div>

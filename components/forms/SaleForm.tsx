@@ -25,7 +25,13 @@ import { SiteVerificationPanel } from '@/components/forms/SiteVerificationPanel'
 import { DocumentUploader } from '@/components/documents/DocumentUploader'
 import { SerialBarcodeField } from '@/components/forms/SerialBarcodeField'
 import {
-  BUSINESS_TYPES,
+  DARES_CUSTOMER_CATEGORIES,
+  DARES_CUSTOMER_TYPES,
+  DARES_GENDERS,
+  DARES_PAYMENT_PLANS,
+  DARES_TYPES_OF_PAYMENT,
+} from '@/lib/constants/dares'
+import {
   GUARDIAN_RELATIONSHIPS,
   INSTALLMENT_WEEK_OPTIONS,
   NIGERIAN_STATES,
@@ -137,13 +143,21 @@ type SaleFormValues = {
     name: string
     email: string
     phone: string
+    alternate_phone: string
     nin: string
     bvn: string
     address: string
+    address_house_number: string
+    address_building_features: string
+    address_street: string
+    address_landmark: string
     city: string
     state: string
     lga: string
     business_type: string
+    gender: string
+    customer_category: string
+    customer_type: string
     is_minor: boolean
     guardian_name: string
     guardian_phone: string
@@ -159,6 +173,11 @@ type SaleFormValues = {
   discount_percent: number
   transport_cost: number
   notes: string
+  dares_type_of_payment: string
+  dares_payment_plan: string
+  retail_cost_ngn: number
+  cost_to_end_user_ngn: number
+  downpayment_amount_ngn: number
   items: { product_id: string; quantity: number; serial_number: string }[]
 }
 
@@ -352,13 +371,21 @@ export function SaleForm({
         name: '',
         email: '',
         phone: '',
+        alternate_phone: '',
         nin: '',
         bvn: '',
         address: '',
+        address_house_number: '',
+        address_building_features: '',
+        address_street: '',
+        address_landmark: '',
         city: '',
         state: '',
         lga: '',
-        business_type: BUSINESS_TYPES[0],
+        business_type: DARES_CUSTOMER_TYPES[0],
+        gender: '',
+        customer_category: '',
+        customer_type: DARES_CUSTOMER_TYPES[0],
         is_minor: false,
         guardian_name: '',
         guardian_phone: '',
@@ -374,6 +401,11 @@ export function SaleForm({
       discount_percent: 0,
       transport_cost: 0,
       notes: '',
+      dares_type_of_payment: '',
+      dares_payment_plan: 'Full Payment',
+      retail_cost_ngn: 0,
+      cost_to_end_user_ngn: 0,
+      downpayment_amount_ngn: 0,
       items: [{ product_id: '', quantity: 1, serial_number: '' }],
     },
   })
@@ -389,6 +421,10 @@ export function SaleForm({
   const selectedState = useWatch({ control, name: 'new_customer.state' }) || ''
   const selectedLga = useWatch({ control, name: 'new_customer.lga' }) || ''
   const firstProductId = watchedItems?.[0]?.product_id || ''
+  const retailCostNgn = useWatch({ control, name: 'retail_cost_ngn' })
+  const costToEndUserNgn = useWatch({ control, name: 'cost_to_end_user_ngn' })
+  const daresPaymentPlan = useWatch({ control, name: 'dares_payment_plan' })
+  const daresTypeOfPayment = useWatch({ control, name: 'dares_type_of_payment' })
 
   const existingCustomer = useMemo(
     () => (customerId ? customers.find((c) => c.id === customerId) : undefined),
@@ -453,6 +489,34 @@ export function SaleForm({
     }, 0)
     return { subtotal, total: Math.round(subtotal) }
   }, [watchedItems, products])
+
+  // Auto-fill retail cost from product totals when still 0
+  useEffect(() => {
+    if (totals.total > 0 && (!retailCostNgn || Number(retailCostNgn) === 0)) {
+      setValue('retail_cost_ngn', totals.total, { shouldDirty: false })
+    }
+  }, [totals.total, retailCostNgn, setValue])
+
+  // Suggest DARES payment plan / type from sale payment_type
+  useEffect(() => {
+    if (paymentType === 'full') {
+      setValue('dares_payment_plan', 'Full Payment', { shouldDirty: false })
+      if (!costToEndUserNgn || Number(costToEndUserNgn) <= 0) {
+        // leave cost alone; downpayment synced when cost is set
+      } else {
+        setValue('downpayment_amount_ngn', Number(costToEndUserNgn), { shouldDirty: false })
+      }
+    } else if (paymentType === 'installment') {
+      const plan = getValues('dares_payment_plan')
+      if (!plan || plan === 'Full Payment') {
+        setValue('dares_payment_plan', 'Custom Installment', { shouldDirty: false })
+      }
+      const type = getValues('dares_type_of_payment')
+      if (!type) {
+        setValue('dares_type_of_payment', 'PAYGO', { shouldDirty: false })
+      }
+    }
+  }, [paymentType, costToEndUserNgn, setValue, getValues])
 
   const planPreview = useMemo(() => {
     if (!isInstallment) return null
@@ -539,9 +603,17 @@ export function SaleForm({
   const bvnValue = useWatch({ control, name: 'new_customer.bvn' }) || ''
   const customerNameValue = useWatch({ control, name: 'new_customer.name' }) || ''
   const customerCityValue = useWatch({ control, name: 'new_customer.city' }) || ''
-  const customerAddressValue = useWatch({ control, name: 'new_customer.address' }) || ''
+  const customerBuildingValue =
+    useWatch({ control, name: 'new_customer.address_building_features' }) || ''
+  const customerStreetValue = useWatch({ control, name: 'new_customer.address_street' }) || ''
+  const customerLandmarkValue = useWatch({ control, name: 'new_customer.address_landmark' }) || ''
   const isMinor = useWatch({ control, name: 'new_customer.is_minor' })
   const guardianPhoneValue = useWatch({ control, name: 'new_customer.guardian_phone' }) || ''
+
+  const composedAddressHint = [customerBuildingValue, customerStreetValue, customerLandmarkValue]
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join(' | ')
 
   useEffect(() => {
     if (customerMode !== 'new') return
@@ -607,7 +679,7 @@ export function SaleForm({
           city: customerCityValue || undefined,
           state: selectedState || undefined,
           lga: selectedLga || undefined,
-          address: customerAddressValue || undefined,
+          address: composedAddressHint || undefined,
           serial: serials.length ? serials : undefined,
         })
         if (!result.success) return
@@ -629,7 +701,7 @@ export function SaleForm({
     customerMode,
     customerNameValue,
     customerCityValue,
-    customerAddressValue,
+    composedAddressHint,
     selectedState,
     selectedLga,
     phoneValue,
@@ -749,8 +821,32 @@ export function SaleForm({
         setError('new_customer.bvn', { message: `BVN must be exactly ${BVN_DIGITS} digits` })
         return
       }
-      if (!nc.address.trim()) {
-        setError('new_customer.address', { message: 'Enter an address' })
+      if (!nc.gender.trim()) {
+        setError('new_customer.gender', { message: 'Select gender' })
+        return
+      }
+      if (!nc.customer_category.trim()) {
+        setError('new_customer.customer_category', { message: 'Select customer category' })
+        return
+      }
+      if (!nc.customer_type.trim()) {
+        setError('new_customer.customer_type', { message: 'Select customer type' })
+        return
+      }
+      if (!nc.address_building_features.trim()) {
+        setError('new_customer.address_building_features', {
+          message: 'Enter building features',
+        })
+        return
+      }
+      if (!nc.address_street.trim()) {
+        setError('new_customer.address_street', {
+          message: 'Enter street / identifying features',
+        })
+        return
+      }
+      if (!nc.address_landmark.trim()) {
+        setError('new_customer.address_landmark', { message: 'Enter nearest landmark' })
         return
       }
       if (!nc.city.trim()) {
@@ -779,7 +875,11 @@ export function SaleForm({
         city: nc.city,
         state: nc.state,
         lga: nc.lga,
-        address: nc.address,
+        address:
+          [nc.address_building_features, nc.address_street, nc.address_landmark]
+            .map((s) => (s || '').trim())
+            .filter(Boolean)
+            .join(' | ') || undefined,
         serial: serials,
       })
       if (!dupResult.success) {
@@ -826,6 +926,20 @@ export function SaleForm({
       setError('items', { message: 'Add at least one product line' })
       return
     }
+
+    if (!(values.dares_type_of_payment || '').trim()) {
+      setFormError('Select DARES type of payment')
+      return
+    }
+    if (!(values.dares_payment_plan || '').trim()) {
+      setFormError('Select DARES payment plan')
+      return
+    }
+    if (Number(values.cost_to_end_user_ngn) <= 0) {
+      setFormError('Enter cost to end user (NGN)')
+      return
+    }
+
     if (values.payment_type === 'installment') {
       const interval = Math.round(Number(values.installment_interval_days))
       if (!Number.isFinite(interval) || interval < 1 || interval > 365) {
@@ -908,6 +1022,12 @@ export function SaleForm({
     }
     const sitePhotoUrl = prepared.data.publicUrl
 
+    const costToEndUser = Number(values.cost_to_end_user_ngn) || 0
+    const downpayment =
+      values.payment_type === 'full'
+        ? costToEndUser
+        : Number(values.downpayment_amount_ngn) || 0
+
     const result = await createSaleAction({
       customer_id: values.customer_mode === 'existing' ? values.customer_id : undefined,
       new_customer:
@@ -916,13 +1036,22 @@ export function SaleForm({
               name: values.new_customer.name.trim(),
               email: values.new_customer.email.trim(),
               phone: values.new_customer.phone.trim(),
+              alternate_phone: values.new_customer.alternate_phone.trim(),
               nin: digitsOnly(values.new_customer.nin),
               bvn: digitsOnly(values.new_customer.bvn),
-              address: values.new_customer.address.trim(),
+              address: '',
+              address_house_number: values.new_customer.address_house_number.trim(),
+              address_building_features: values.new_customer.address_building_features.trim(),
+              address_street: values.new_customer.address_street.trim(),
+              address_landmark: values.new_customer.address_landmark.trim(),
               city: values.new_customer.city.trim(),
               state: values.new_customer.state.trim(),
               lga: values.new_customer.lga.trim(),
-              business_type: values.new_customer.business_type,
+              business_type:
+                values.new_customer.customer_type || values.new_customer.business_type,
+              gender: values.new_customer.gender.trim(),
+              customer_category: values.new_customer.customer_category.trim(),
+              customer_type: values.new_customer.customer_type.trim(),
               credit_limit: 0,
               is_minor: Boolean(values.new_customer.is_minor),
               guardian_name: values.new_customer.guardian_name.trim(),
@@ -944,6 +1073,11 @@ export function SaleForm({
       discount_percent: 0,
       transport_cost: 0,
       notes: '',
+      dares_type_of_payment: values.dares_type_of_payment.trim(),
+      dares_payment_plan: values.dares_payment_plan.trim(),
+      retail_cost_ngn: Number(values.retail_cost_ngn) || totals.total,
+      cost_to_end_user_ngn: costToEndUser,
+      downpayment_amount_ngn: downpayment,
       items: values.items
         .filter((item) => item.product_id)
         .map((item) => ({
@@ -1001,13 +1135,21 @@ export function SaleForm({
         name: '',
         email: '',
         phone: '',
+        alternate_phone: '',
         nin: '',
         bvn: '',
         address: '',
+        address_house_number: '',
+        address_building_features: '',
+        address_street: '',
+        address_landmark: '',
         city: '',
         state: keepState,
         lga: keepLga,
-        business_type: BUSINESS_TYPES[0],
+        business_type: DARES_CUSTOMER_TYPES[0],
+        gender: '',
+        customer_category: '',
+        customer_type: DARES_CUSTOMER_TYPES[0],
         is_minor: false,
         guardian_name: '',
         guardian_phone: '',
@@ -1023,6 +1165,11 @@ export function SaleForm({
       discount_percent: 0,
       transport_cost: 0,
       notes: '',
+      dares_type_of_payment: '',
+      dares_payment_plan: 'Full Payment',
+      retail_cost_ngn: 0,
+      cost_to_end_user_ngn: 0,
+      downpayment_amount_ngn: 0,
       items: [
         {
           product_id: productLock.locked ? keepProductId : '',
@@ -1118,6 +1265,72 @@ export function SaleForm({
                   )}
                 </div>
 
+                <div>
+                  <Label htmlFor="new_customer.gender">Gender</Label>
+                  <Select id="new_customer.gender" {...register('new_customer.gender')}>
+                    <option value="">Select…</option>
+                    {DARES_GENDERS.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </Select>
+                  {errors.new_customer?.gender && (
+                    <p className="mt-1 text-xs text-destructive">
+                      {errors.new_customer.gender.message}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <Label htmlFor="new_customer.customer_category">Customer category</Label>
+                  <Select
+                    id="new_customer.customer_category"
+                    {...register('new_customer.customer_category')}
+                  >
+                    <option value="">Select…</option>
+                    {DARES_CUSTOMER_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </Select>
+                  {errors.new_customer?.customer_category && (
+                    <p className="mt-1 text-xs text-destructive">
+                      {errors.new_customer.customer_category.message}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <Label htmlFor="new_customer.customer_type">Customer type</Label>
+                  <Select
+                    id="new_customer.customer_type"
+                    {...register('new_customer.customer_type', {
+                      onChange: (e) => {
+                        const next = e.target.value
+                        setValue('new_customer.customer_type', next, { shouldDirty: true })
+                        if (next) {
+                          setValue('new_customer.business_type', next, { shouldDirty: true })
+                        }
+                      },
+                    })}
+                  >
+                    <option value="">Select…</option>
+                    {DARES_CUSTOMER_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </Select>
+                  {errors.new_customer?.customer_type && (
+                    <p className="mt-1 text-xs text-destructive">
+                      {errors.new_customer.customer_type.message}
+                    </p>
+                  )}
+                  <input type="hidden" {...register('new_customer.business_type')} />
+                </div>
+
                 {customerMode === 'new' && softMatches.length > 0 && (
                   <div className="md:col-span-2">
                     <SoftDuplicateAlert
@@ -1163,6 +1376,27 @@ export function SaleForm({
                   }}
                   onSearch={() => void runDuplicateCheck('phone')}
                 />
+                <div>
+                  <Label htmlFor="new_customer.alternate_phone">Alternate phone (optional)</Label>
+                  <Input
+                    id="new_customer.alternate_phone"
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    maxLength={13}
+                    placeholder="07012345678"
+                    {...register('new_customer.alternate_phone', {
+                      onChange: (e) => {
+                        const digits = e.target.value.replace(/\D/g, '')
+                        const limit = digits.startsWith('234') ? 13 : 11
+                        e.target.value = digits.slice(0, limit)
+                        setValue('new_customer.alternate_phone', e.target.value, {
+                          shouldDirty: true,
+                        })
+                      },
+                    })}
+                  />
+                </div>
                 <UniqueField
                   field="nin"
                   label="NIN"
@@ -1200,16 +1434,53 @@ export function SaleForm({
                   />
                 </div>
 
-                <div className="md:col-span-2">
-                  <Label htmlFor="new_customer.address">Address</Label>
+                <div>
+                  <Label htmlFor="new_customer.address_house_number">House number (optional)</Label>
                   <Input
-                    id="new_customer.address"
-                    placeholder="Street address"
-                    {...register('new_customer.address')}
+                    id="new_customer.address_house_number"
+                    placeholder="e.g. 12A"
+                    {...register('new_customer.address_house_number')}
                   />
-                  {errors.new_customer?.address && (
+                </div>
+
+                <div className="md:col-span-2">
+                  <Label htmlFor="new_customer.address_building_features">Building features</Label>
+                  <Input
+                    id="new_customer.address_building_features"
+                    placeholder="e.g. White bungalow with blue gate"
+                    {...register('new_customer.address_building_features')}
+                  />
+                  {errors.new_customer?.address_building_features && (
                     <p className="mt-1 text-xs text-destructive">
-                      {errors.new_customer.address.message}
+                      {errors.new_customer.address_building_features.message}
+                    </p>
+                  )}
+                </div>
+
+                <div className="md:col-span-2">
+                  <Label htmlFor="new_customer.address_street">Street / identifying features</Label>
+                  <Input
+                    id="new_customer.address_street"
+                    placeholder="e.g. Adeola Odeku Street"
+                    {...register('new_customer.address_street')}
+                  />
+                  {errors.new_customer?.address_street && (
+                    <p className="mt-1 text-xs text-destructive">
+                      {errors.new_customer.address_street.message}
+                    </p>
+                  )}
+                </div>
+
+                <div className="md:col-span-2">
+                  <Label htmlFor="new_customer.address_landmark">Nearest landmark</Label>
+                  <Input
+                    id="new_customer.address_landmark"
+                    placeholder="e.g. Near First Bank"
+                    {...register('new_customer.address_landmark')}
+                  />
+                  {errors.new_customer?.address_landmark && (
+                    <p className="mt-1 text-xs text-destructive">
+                      {errors.new_customer.address_landmark.message}
                     </p>
                   )}
                 </div>
@@ -1220,17 +1491,6 @@ export function SaleForm({
                   {errors.new_customer?.city && (
                     <p className="mt-1 text-xs text-destructive">{errors.new_customer.city.message}</p>
                   )}
-                </div>
-
-                <div>
-                  <Label htmlFor="new_customer.business_type">Business / customer type</Label>
-                  <Select id="new_customer.business_type" {...register('new_customer.business_type')}>
-                    {BUSINESS_TYPES.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </Select>
                 </div>
               </div>
 
@@ -1578,6 +1838,108 @@ export function SaleForm({
               )}
             </div>
           )}
+
+          <div className="space-y-4 rounded-xl border border-border/70 bg-secondary/15 p-4">
+            <div>
+              <p className="text-sm font-medium">DARES claim payment</p>
+              <p className="text-xs text-muted-foreground">
+                Odyssey / PMU fields for claim submission
+              </p>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="dares_type_of_payment">Type of payment</Label>
+                <Select
+                  id="dares_type_of_payment"
+                  className="mt-1.5"
+                  {...register('dares_type_of_payment')}
+                >
+                  <option value="">Select…</option>
+                  {DARES_TYPES_OF_PAYMENT.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="dares_payment_plan">Payment plan</Label>
+                <Select
+                  id="dares_payment_plan"
+                  className="mt-1.5"
+                  {...register('dares_payment_plan')}
+                >
+                  <option value="">Select…</option>
+                  {DARES_PAYMENT_PLANS.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="retail_cost_ngn">Retail cost of system (NGN)</Label>
+                <Input
+                  id="retail_cost_ngn"
+                  type="number"
+                  min={0}
+                  step={1}
+                  inputMode="numeric"
+                  className="mt-1.5"
+                  {...register('retail_cost_ngn', { valueAsNumber: true })}
+                />
+                {totals.total > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Product total: {formatCurrency(totals.total)}
+                  </p>
+                )}
+              </div>
+              <div>
+                <Label htmlFor="cost_to_end_user_ngn">Cost to end user (NGN)</Label>
+                <Input
+                  id="cost_to_end_user_ngn"
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  className="mt-1.5"
+                  {...register('cost_to_end_user_ngn', {
+                    valueAsNumber: true,
+                    onChange: (e) => {
+                      const n = Number(e.target.value) || 0
+                      setValue('cost_to_end_user_ngn', n, { shouldDirty: true })
+                      if (!isInstallment) {
+                        setValue('downpayment_amount_ngn', n, { shouldDirty: true })
+                      }
+                    },
+                  })}
+                />
+              </div>
+              <div className={isInstallment ? 'sm:col-span-2' : ''}>
+                <Label htmlFor="downpayment_amount_ngn">Downpayment amount (NGN)</Label>
+                <Input
+                  id="downpayment_amount_ngn"
+                  type="number"
+                  min={0}
+                  step={1}
+                  inputMode="numeric"
+                  className="mt-1.5"
+                  disabled={!isInstallment}
+                  {...register('downpayment_amount_ngn', { valueAsNumber: true })}
+                />
+                {!isInstallment && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Full payment — downpayment matches cost to end user
+                  </p>
+                )}
+              </div>
+            </div>
+            {(daresTypeOfPayment || daresPaymentPlan) && (
+              <p className="text-xs text-muted-foreground">
+                {[daresTypeOfPayment, daresPaymentPlan].filter(Boolean).join(' · ')}
+              </p>
+            )}
+          </div>
         </div>
       </Panel>
 

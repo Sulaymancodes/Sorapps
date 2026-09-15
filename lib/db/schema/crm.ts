@@ -20,6 +20,11 @@ export const customers = pgTable(
     nin: text('nin').notNull().default(''),
     bvn: text('bvn').notNull().default(''),
     address: text('address').notNull(),
+    /** Structured DARES Location (Address) parts — composed into `address` for display/export */
+    addressHouseNumber: text('address_house_number').notNull().default(''),
+    addressBuildingFeatures: text('address_building_features').notNull().default(''),
+    addressStreet: text('address_street').notNull().default(''),
+    addressLandmark: text('address_landmark').notNull().default(''),
     city: text('city').notNull(),
     state: text('state').notNull(),
     lga: text('lga').notNull().default(''),
@@ -30,6 +35,11 @@ export const customers = pgTable(
     gpsOutOfArea: boolean('gps_out_of_area').notNull().default(false),
     photoUrl: text('photo_url').notNull().default(''),
     businessType: text('business_type').notNull(),
+    /** DARES claim fields */
+    gender: text('gender').notNull().default(''),
+    customerCategory: text('customer_category').notNull().default(''),
+    customerType: text('customer_type').notNull().default(''),
+    alternatePhone: text('alternate_phone').notNull().default(''),
     creditLimit: integer('credit_limit').notNull().default(0),
     totalPurchases: integer('total_purchases').notNull().default(0),
     outstandingBalance: integer('outstanding_balance').notNull().default(0),
@@ -61,6 +71,10 @@ export const products = pgTable(
     category: text('category').notNull(),
     brand: text('brand').notNull(),
     description: text('description').notNull().default(''),
+    /** Approved deployment model number (DARES "Model") */
+    modelNumber: text('model_number').notNull().default(''),
+    /** PV capacity in watts peak (DARES "PV Capacity (W)") */
+    pvCapacityWp: integer('pv_capacity_wp').notNull().default(0),
     price: integer('price').notNull(),
     cost: integer('cost').notNull(),
     stock: integer('stock').notNull().default(0),
@@ -93,6 +107,12 @@ export const sales = pgTable(
     transportCost: integer('transport_cost').notNull().default(0),
     profit: integer('profit').notNull().default(0),
     notes: text('notes').notNull().default(''),
+    /** DARES claim financial / payment classification */
+    daresTypeOfPayment: text('dares_type_of_payment').notNull().default(''),
+    daresPaymentPlan: text('dares_payment_plan').notNull().default(''),
+    retailCostNgn: integer('retail_cost_ngn').notNull().default(0),
+    costToEndUserNgn: integer('cost_to_end_user_ngn').notNull().default(0),
+    downpaymentAmountNgn: integer('downpayment_amount_ngn').notNull().default(0),
     latitude: real('latitude'),
     longitude: real('longitude'),
     gpsCapturedAt: timestamp('gps_captured_at'),

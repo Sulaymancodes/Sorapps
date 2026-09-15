@@ -8,6 +8,7 @@ import {
   formatSoftReason,
   scoreSoftDuplicate,
 } from '@/lib/utils/duplicate-match'
+import { composeDaresAddress } from '@/lib/constants/dares'
 
 function digitsOnly(value: string) {
   return value.replace(/\D/g, '')
@@ -38,6 +39,18 @@ function assertContactRules(input: CustomerInput) {
   const guardianPhone = (input.guardian_phone || '').trim()
   const guardianName = (input.guardian_name || '').trim()
   const guardianRel = (input.guardian_relationship || '').trim()
+  const altPhone = (input.alternate_phone || '').trim()
+
+  if (!(input.gender || '').trim()) throw new Error('Select gender of primary account holder')
+  if (!(input.customer_category || '').trim()) throw new Error('Select customer category')
+  if (!(input.customer_type || '').trim()) throw new Error('Select customer type')
+
+  const building = (input.address_building_features || '').trim()
+  const street = (input.address_street || '').trim()
+  const landmark = (input.address_landmark || '').trim()
+  if (!building) throw new Error('Enter distinct building features (required for DARES address)')
+  if (!street) throw new Error('Enter street name or identifying features')
+  if (!landmark) throw new Error('Enter nearest landmark')
 
   if (isMinor) {
     if (!guardianName) throw new Error('Enter the parent/guardian name for a minor beneficiary')
@@ -52,6 +65,10 @@ function assertContactRules(input: CustomerInput) {
     if (!isCompletePhone(phone)) {
       throw new Error('Enter a valid beneficiary phone number')
     }
+  }
+
+  if (altPhone && !isCompletePhone(altPhone)) {
+    throw new Error('Alternate phone is incomplete')
   }
 
   const nokPhone = (input.next_of_kin_phone || '').trim()
@@ -72,6 +89,10 @@ function mapCustomer(row: typeof customers.$inferSelect): Customer {
     nin: row.nin || '',
     bvn: row.bvn || '',
     address: row.address,
+    address_house_number: row.addressHouseNumber || '',
+    address_building_features: row.addressBuildingFeatures || '',
+    address_street: row.addressStreet || '',
+    address_landmark: row.addressLandmark || '',
     city: row.city,
     state: row.state,
     lga: row.lga || '',
@@ -82,6 +103,10 @@ function mapCustomer(row: typeof customers.$inferSelect): Customer {
     gps_out_of_area: row.gpsOutOfArea,
     photo_url: row.photoUrl || '',
     business_type: row.businessType,
+    gender: row.gender || '',
+    customer_category: row.customerCategory || '',
+    customer_type: row.customerType || '',
+    alternate_phone: row.alternatePhone || '',
     credit_limit: row.creditLimit,
     total_purchases: row.totalPurchases,
     outstanding_balance: row.outstandingBalance,
@@ -386,13 +411,29 @@ async function assertNoDuplicates(input: CustomerInput, excludeId?: string) {
 }
 
 function customerValues(input: CustomerInput) {
+  const house = (input.address_house_number || '').trim()
+  const building = (input.address_building_features || '').trim()
+  const street = (input.address_street || '').trim()
+  const landmark = (input.address_landmark || '').trim()
+  const composed = composeDaresAddress({
+    house_number: house,
+    building_features: building,
+    street,
+    landmark,
+    fallback: (input.address || '').trim(),
+  })
+
   return {
     name: input.name.trim(),
     email: (input.email || '').trim(),
     phone: (input.phone || '').trim(),
     nin: normalizeNin(input.nin || ''),
     bvn: normalizeBvn(input.bvn || ''),
-    address: input.address.trim(),
+    address: composed,
+    addressHouseNumber: house,
+    addressBuildingFeatures: building,
+    addressStreet: street,
+    addressLandmark: landmark,
     city: input.city.trim(),
     state: input.state,
     lga: (input.lga || '').trim(),
@@ -402,7 +443,11 @@ function customerValues(input: CustomerInput) {
     gpsLocked: Boolean(input.gps_locked),
     gpsOutOfArea: Boolean(input.gps_out_of_area),
     photoUrl: (input.photo_url || '').trim(),
-    businessType: input.business_type,
+    businessType: input.business_type || input.customer_type || 'Household',
+    gender: (input.gender || '').trim(),
+    customerCategory: (input.customer_category || '').trim(),
+    customerType: (input.customer_type || '').trim(),
+    alternatePhone: (input.alternate_phone || '').trim(),
     creditLimit: Math.max(0, Math.round(input.credit_limit)),
     isMinor: Boolean(input.is_minor),
     guardianName: (input.guardian_name || '').trim(),

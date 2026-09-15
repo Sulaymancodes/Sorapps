@@ -9,6 +9,10 @@ export interface Customer {
   nin: string
   bvn: string
   address: string
+  address_house_number: string
+  address_building_features: string
+  address_street: string
+  address_landmark: string
   city: string
   state: string
   lga: string
@@ -19,6 +23,10 @@ export interface Customer {
   gps_out_of_area?: boolean
   photo_url?: string
   business_type: string
+  gender: string
+  customer_category: string
+  customer_type: string
+  alternate_phone: string
   credit_limit: number
   total_purchases: number
   outstanding_balance: number
@@ -40,6 +48,8 @@ export interface Product {
   category: string
   brand: string
   description: string
+  model_number: string
+  pv_capacity_wp: number
   price: number
   cost: number
   stock: number
@@ -72,6 +82,11 @@ export interface Sale {
   items: SaleItem[]
   profit: number
   notes: string
+  dares_type_of_payment?: string
+  dares_payment_plan?: string
+  retail_cost_ngn?: number
+  cost_to_end_user_ngn?: number
+  downpayment_amount_ngn?: number
   latitude?: number | null
   longitude?: number | null
   gps_captured_at?: Date | null
@@ -245,6 +260,10 @@ export type CustomerInput = {
   nin?: string
   bvn?: string
   address: string
+  address_house_number?: string
+  address_building_features?: string
+  address_street?: string
+  address_landmark?: string
   city: string
   state: string
   lga?: string
@@ -255,6 +274,10 @@ export type CustomerInput = {
   gps_out_of_area?: boolean
   photo_url?: string
   business_type: string
+  gender?: string
+  customer_category?: string
+  customer_type?: string
+  alternate_phone?: string
   credit_limit: number
   is_minor?: boolean
   guardian_name?: string
@@ -319,6 +342,11 @@ export type SaleInput = {
   discount_percent: number
   transport_cost: number
   notes: string
+  dares_type_of_payment?: string
+  dares_payment_plan?: string
+  retail_cost_ngn?: number
+  cost_to_end_user_ngn?: number
+  downpayment_amount_ngn?: number
   items: SaleLineInput[]
   site_gps: SaleSiteGpsInput
   site_photo_url: string
@@ -332,6 +360,8 @@ export type ProductInput = {
   category: string
   brand: string
   description: string
+  model_number: string
+  pv_capacity_wp: number
   price: number
   cost: number
   stock: number

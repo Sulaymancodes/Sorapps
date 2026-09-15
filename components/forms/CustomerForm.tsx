@@ -11,6 +11,12 @@ import { Panel } from '@/components/common/Panel'
 import { SearchableSelect } from '@/components/common/SearchableSelect'
 import { DocumentUploader } from '@/components/documents/DocumentUploader'
 import { SoftDuplicateAlert } from '@/components/forms/SoftDuplicateAlert'
+import {
+  DARES_CUSTOMER_CATEGORIES,
+  DARES_CUSTOMER_TYPES,
+  DARES_GENDERS,
+  composeDaresAddress,
+} from '@/lib/constants/dares'
 import { BUSINESS_TYPES, GUARDIAN_RELATIONSHIPS, NIGERIAN_STATES } from '@/lib/constants/options'
 import { getLgasForState } from '@/lib/constants/lgas'
 import {
@@ -64,10 +70,18 @@ export function CustomerForm({
       nin: customer?.nin || '',
       bvn: customer?.bvn || '',
       address: customer?.address || '',
+      address_house_number: customer?.address_house_number || '',
+      address_building_features: customer?.address_building_features || '',
+      address_street: customer?.address_street || '',
+      address_landmark: customer?.address_landmark || '',
       city: customer?.city || '',
       state: customer?.state || '',
       lga: customer?.lga || '',
       business_type: customer?.business_type || BUSINESS_TYPES[0],
+      gender: customer?.gender || '',
+      customer_category: customer?.customer_category || '',
+      customer_type: customer?.customer_type || '',
+      alternate_phone: customer?.alternate_phone || '',
       credit_limit: customer?.credit_limit || 500000,
       is_minor: customer?.is_minor || false,
       guardian_name: customer?.guardian_name || '',
@@ -87,8 +101,29 @@ export function CustomerForm({
   const watchedNin = useWatch({ control, name: 'nin' }) || ''
   const watchedBvn = useWatch({ control, name: 'bvn' }) || ''
   const watchedCity = useWatch({ control, name: 'city' }) || ''
-  const watchedAddress = useWatch({ control, name: 'address' }) || ''
+  const watchedHouseNumber = useWatch({ control, name: 'address_house_number' }) || ''
+  const watchedBuildingFeatures = useWatch({ control, name: 'address_building_features' }) || ''
+  const watchedStreet = useWatch({ control, name: 'address_street' }) || ''
+  const watchedLandmark = useWatch({ control, name: 'address_landmark' }) || ''
   const watchedGuardianPhone = useWatch({ control, name: 'guardian_phone' }) || ''
+
+  const composedAddress = useMemo(
+    () =>
+      composeDaresAddress({
+        house_number: watchedHouseNumber,
+        building_features: watchedBuildingFeatures,
+        street: watchedStreet,
+        landmark: watchedLandmark,
+        fallback: customer?.address || '',
+      }),
+    [
+      watchedHouseNumber,
+      watchedBuildingFeatures,
+      watchedStreet,
+      watchedLandmark,
+      customer?.address,
+    ]
+  )
 
   const stateOptions = (() => {
     if (selectedState && !(NIGERIAN_STATES as readonly string[]).includes(selectedState)) {
@@ -116,7 +151,7 @@ export function CustomerForm({
           city: watchedCity || undefined,
           state: selectedState || undefined,
           lga: selectedLga || undefined,
-          address: watchedAddress || undefined,
+          address: composedAddress || undefined,
           exclude_id: customer?.id,
         })
         if (!result.success) return
@@ -132,7 +167,7 @@ export function CustomerForm({
     watchedNin,
     watchedBvn,
     watchedCity,
-    watchedAddress,
+    composedAddress,
     selectedState,
     selectedLga,
     watchedGuardianPhone,
@@ -168,8 +203,16 @@ export function CustomerForm({
       return
     }
 
-    if (!values.address.trim()) {
-      setError('address', { message: 'Enter an address' })
+    if (!(values.address_building_features || '').trim()) {
+      setError('address_building_features', { message: 'Enter building features' })
+      return
+    }
+    if (!(values.address_street || '').trim()) {
+      setError('address_street', { message: 'Enter a street' })
+      return
+    }
+    if (!(values.address_landmark || '').trim()) {
+      setError('address_landmark', { message: 'Enter a landmark' })
       return
     }
     if (!values.city.trim()) {
@@ -185,6 +228,13 @@ export function CustomerForm({
       return
     }
 
+    const composed = composeDaresAddress({
+      house_number: values.address_house_number,
+      building_features: values.address_building_features,
+      street: values.address_street,
+      landmark: values.address_landmark,
+    })
+
     const scan = await scanBeneficiaryDuplicatesAction({
       name: values.name.trim(),
       phone: values.phone || values.guardian_phone,
@@ -193,7 +243,7 @@ export function CustomerForm({
       city: values.city,
       state: values.state,
       lga: values.lga,
-      address: values.address,
+      address: composed,
       exclude_id: customer?.id,
     })
     if (!scan.success) {
@@ -218,6 +268,8 @@ export function CustomerForm({
       }
     }
 
+    const customerType = (values.customer_type || '').trim()
+
     const payload = {
       ...values,
       name: values.name.trim(),
@@ -225,9 +277,18 @@ export function CustomerForm({
       phone: (values.phone || '').trim(),
       nin: values.nin?.trim() || '',
       bvn: values.bvn?.trim() || '',
-      address: values.address.trim(),
+      address: '',
+      address_house_number: (values.address_house_number || '').trim(),
+      address_building_features: (values.address_building_features || '').trim(),
+      address_street: (values.address_street || '').trim(),
+      address_landmark: (values.address_landmark || '').trim(),
       city: values.city.trim(),
       lga: values.lga?.trim() || '',
+      gender: (values.gender || '').trim(),
+      customer_category: (values.customer_category || '').trim(),
+      customer_type: customerType,
+      business_type: customerType || values.business_type,
+      alternate_phone: (values.alternate_phone || '').trim(),
       credit_limit: Number(values.credit_limit) || 0,
       is_minor: Boolean(values.is_minor),
       guardian_name: (values.guardian_name || '').trim(),
@@ -342,6 +403,62 @@ export function CustomerForm({
           </div>
 
           <div>
+            <Label htmlFor="alternate_phone">Alternate phone</Label>
+            <Input
+              id="alternate_phone"
+              type="tel"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={13}
+              placeholder="07012345678"
+              {...register('alternate_phone', {
+                onChange: (e) => {
+                  const digits = e.target.value.replace(/\D/g, '')
+                  const limit = digits.startsWith('234') ? 13 : 11
+                  e.target.value = digits.slice(0, limit)
+                  setValue('alternate_phone', e.target.value, { shouldDirty: true })
+                },
+              })}
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="gender">Gender</Label>
+            <Select id="gender" {...register('gender')}>
+              <option value="">Select…</option>
+              {DARES_GENDERS.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <Label htmlFor="customer_category">Customer category</Label>
+            <Select id="customer_category" {...register('customer_category')}>
+              <option value="">Select…</option>
+              {DARES_CUSTOMER_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <Label htmlFor="customer_type">Customer type</Label>
+            <Select id="customer_type" {...register('customer_type')}>
+              <option value="">Select…</option>
+              {DARES_CUSTOMER_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
             <Label htmlFor="nin">NIN</Label>
             <Input
               id="nin"
@@ -377,11 +494,50 @@ export function CustomerForm({
             />
           </div>
 
-          <div className="md:col-span-2">
-            <Label htmlFor="address">Address</Label>
-            <Input id="address" placeholder="Street address" {...register('address')} />
-            {errors.address && (
-              <p className="mt-1 text-xs text-destructive">{errors.address.message}</p>
+          <div>
+            <Label htmlFor="address_house_number">House number (optional)</Label>
+            <Input
+              id="address_house_number"
+              placeholder="e.g. 12A"
+              {...register('address_house_number')}
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="address_building_features">Building features</Label>
+            <Input
+              id="address_building_features"
+              placeholder="e.g. White bungalow with blue gate"
+              {...register('address_building_features')}
+            />
+            {errors.address_building_features && (
+              <p className="mt-1 text-xs text-destructive">
+                {errors.address_building_features.message}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <Label htmlFor="address_street">Street</Label>
+            <Input
+              id="address_street"
+              placeholder="e.g. Adeola Odeku Street"
+              {...register('address_street')}
+            />
+            {errors.address_street && (
+              <p className="mt-1 text-xs text-destructive">{errors.address_street.message}</p>
+            )}
+          </div>
+
+          <div>
+            <Label htmlFor="address_landmark">Landmark</Label>
+            <Input
+              id="address_landmark"
+              placeholder="e.g. Near First Bank"
+              {...register('address_landmark')}
+            />
+            {errors.address_landmark && (
+              <p className="mt-1 text-xs text-destructive">{errors.address_landmark.message}</p>
             )}
           </div>
 

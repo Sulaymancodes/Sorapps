@@ -356,7 +356,21 @@ export function ReportsPageClient({
             rows={report.shs_connections as unknown as Record<string, unknown>[]}
             columns={[
               { key: 'name', label: 'Beneficiary' },
+              { key: 'gender', label: 'Gender' },
+              { key: 'customer_category', label: 'Category' },
+              { key: 'customer_type', label: 'Type' },
               { key: 'phone', label: 'Phone' },
+              { key: 'alternate_phone', label: 'Alt phone' },
+              {
+                key: 'address',
+                label: 'Address',
+                render: (r) =>
+                  String(r.address || '') ||
+                  [r.address_house_number, r.address_street, r.address_landmark]
+                    .filter(Boolean)
+                    .join(', ') ||
+                  '—',
+              },
               {
                 key: 'state',
                 label: 'Location',
@@ -368,7 +382,18 @@ export function ReportsPageClient({
                 label: 'Sale date',
                 render: (r) => formatDate(new Date(String(r.sale_date))),
               },
-              { key: 'payment_type', label: 'Pay type' },
+              { key: 'dares_type_of_payment', label: 'DARES pay type' },
+              { key: 'dares_payment_plan', label: 'Payment plan' },
+              {
+                key: 'cost_to_end_user_ngn',
+                label: 'Cost to end user',
+                render: (r) => formatCurrency(Number(r.cost_to_end_user_ngn) || 0),
+              },
+              {
+                key: 'downpayment_amount_ngn',
+                label: 'Downpayment',
+                render: (r) => formatCurrency(Number(r.downpayment_amount_ngn) || 0),
+              },
               { key: 'sale_status', label: 'Status' },
               {
                 key: 'total_amount',
@@ -577,6 +602,13 @@ export function ReportsPageClient({
             columns={[
               { key: 'serial_number', label: 'Serial' },
               { key: 'product_name', label: 'Product' },
+              { key: 'model_number', label: 'Model' },
+              {
+                key: 'pv_capacity_wp',
+                label: 'PV (W)',
+                render: (r) =>
+                  Number(r.pv_capacity_wp) > 0 ? String(r.pv_capacity_wp) : '—',
+              },
               { key: 'product_sku', label: 'SKU' },
               { key: 'beneficiary_name', label: 'Beneficiary' },
               { key: 'state', label: 'State' },

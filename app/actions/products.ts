@@ -12,6 +12,8 @@ const productSchema = z.object({
   category: z.string().min(1, 'Category is required'),
   brand: z.string().min(1, 'Brand is required'),
   description: z.string(),
+  model_number: z.string().min(1, 'Approved model number is required'),
+  pv_capacity_wp: z.coerce.number().int().min(1, 'PV capacity (W) is required'),
   price: z.coerce.number().min(0),
   cost: z.coerce.number().min(0),
   stock: z.coerce.number().min(0),
