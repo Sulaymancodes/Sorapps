@@ -37,6 +37,17 @@ export function parseDateInput(iso: string): Date {
   return startOfLocalDay(new Date(y, m - 1, d))
 }
 
+/** Calendar "today" in Africa/Lagos — sale/PAYGO dates follow Nigerian field ops, not UTC server time. */
+export function todayInLagos(): Date {
+  const ymd = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Lagos',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date())
+  return parseDateInput(ymd)
+}
+
 /**
  * Equal installments from start through end, spaced by intervalDays.
  * Due dates: start, start+interval, … while due <= end.
@@ -56,7 +67,7 @@ export function buildInstallmentsByInterval(params: {
   const start = startOfLocalDay(params.startDate)
   const end = startOfLocalDay(params.endDate)
   if (end.getTime() <= start.getTime()) {
-    throw new Error('Plan end date must be after the sale date')
+    throw new Error('Plan end date must be after the sale date (pick a date after today)')
   }
 
   const spanDays = Math.round((end.getTime() - start.getTime()) / 86400000)

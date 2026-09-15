@@ -30,28 +30,32 @@ import type {
 import { nextId } from '@/lib/utils/ids'
 import { evaluateDeploymentArea } from '@/lib/utils/gps'
 import {
-  addLocalDays,
   buildInstallmentsByInterval,
   isValidIntervalDays,
   parseDateInput,
   startOfLocalDay,
+  todayInLagos,
+  toDateInputValue,
 } from '@/lib/paygo/schedule'
 
-/** @deprecated Prefer buildInstallmentsByInterval — kept for full-payment single installment */
-function buildInstallments(
+/** Single paid-in-full installment for cash / full payment sales (not PAYGO). */
+function buildFullPaymentInstallment(
   total: number,
-  weeks: number,
   startDate: Date,
   saleIndexLabel: string
 ): Installment[] {
-  const end = addLocalDays(startOfLocalDay(startDate), Math.max(0, (weeks - 1) * 7))
-  return buildInstallmentsByInterval({
-    total,
-    startDate,
-    endDate: end,
-    intervalDays: 7,
-    saleIndexLabel,
-  })
+  const due = startOfLocalDay(startDate)
+  const label = saleIndexLabel || '00000'
+  return [
+    {
+      id: `INST${label}-W01`,
+      week_number: 1,
+      amount: Math.round(total),
+      due_date: due,
+      status: 'pending',
+      reminder: false,
+    },
+  ]
 }
 
 function mapSale(
@@ -324,6 +328,37 @@ export async function createSale(
     throw new Error('Upload a site photo before saving this sale')
   }
 
+  // Validate PAYGO dates before any DB writes (avoids orphan customers on failure)
+  let installment_interval_days: number | null = null
+  let plan_end_date: Date | null = null
+  let installment_weeks: number | null = null
+  const startDay = todayInLagos()
+
+  if (input.payment_type === 'installment') {
+    const interval = Math.round(Number(input.installment_interval_days))
+    if (!isValidIntervalDays(interval)) {
+      throw new Error('Payment interval must be a whole number of days between 1 and 365')
+    }
+    installment_interval_days = interval
+
+    if (!input.plan_end_date?.trim()) {
+      throw new Error('Choose a plan end date')
+    }
+    const parsedEnd = parseDateInput(input.plan_end_date)
+    if (Number.isNaN(parsedEnd.getTime())) {
+      throw new Error('Invalid plan end date')
+    }
+    if (parsedEnd.getTime() <= startDay.getTime()) {
+      throw new Error(
+        `Plan end date must be after the sale date (sale date is ${toDateInputValue(startDay)}; pick a later end date)`
+      )
+    }
+    plan_end_date = parsedEnd
+
+    const spanDays = Math.round((plan_end_date.getTime() - startDay.getTime()) / 86400000)
+    installment_weeks = Math.max(1, Math.ceil(spanDays / 7))
+  }
+
   const gpsCheckForNewCustomer = input.new_customer
     ? evaluateDeploymentArea(input.site_gps.latitude, input.site_gps.longitude, {
         state: input.new_customer.state,
@@ -331,22 +366,25 @@ export async function createSale(
       })
     : null
 
-  let customerId = input.customer_id?.trim() || ''
-  if (!customerId && input.new_customer) {
-    const created = await createCustomer({
-      ...input.new_customer,
-      latitude: input.site_gps.latitude,
-      longitude: input.site_gps.longitude,
-      gps_captured_at: new Date(input.site_gps.captured_at),
-      gps_locked: true,
-      gps_out_of_area: gpsCheckForNewCustomer?.out_of_area ?? input.site_gps.out_of_area,
-      photo_url: input.site_photo_url.trim(),
-    })
-    customerId = created.id
-  }
-  if (!customerId) throw new Error('Select or create a customer')
-
   return db.transaction(async (tx) => {
+    let customerId = input.customer_id?.trim() || ''
+    if (!customerId && input.new_customer) {
+      const created = await createCustomer(
+        {
+          ...input.new_customer,
+          latitude: input.site_gps.latitude,
+          longitude: input.site_gps.longitude,
+          gps_captured_at: new Date(input.site_gps.captured_at),
+          gps_locked: true,
+          gps_out_of_area: gpsCheckForNewCustomer?.out_of_area ?? input.site_gps.out_of_area,
+          photo_url: input.site_photo_url.trim(),
+        },
+        tx
+      )
+      customerId = created.id
+    }
+    if (!customerId) throw new Error('Select or create a customer')
+
     const [customer] = await tx
       .select()
       .from(customers)
@@ -413,31 +451,6 @@ export async function createSale(
     const payment_method = input.payment_method || 'cash'
     const isFullyPaid = payment_type === 'full'
     const now = new Date()
-    const startDay = startOfLocalDay(now)
-
-    let installment_interval_days: number | null = null
-    let plan_end_date: Date | null = null
-    let installment_weeks: number | null = null
-
-    if (payment_type === 'installment') {
-      const interval = Math.round(Number(input.installment_interval_days))
-      if (!isValidIntervalDays(interval)) {
-        throw new Error('Payment interval must be a whole number of days between 1 and 365')
-      }
-      installment_interval_days = interval
-
-      if (!input.plan_end_date?.trim()) {
-        throw new Error('Choose a plan end date')
-      }
-      const parsedEnd = parseDateInput(input.plan_end_date)
-      if (Number.isNaN(parsedEnd.getTime())) {
-        throw new Error('Invalid plan end date')
-      }
-      plan_end_date = parsedEnd
-
-      const spanDays = Math.round((plan_end_date.getTime() - startDay.getTime()) / 86400000)
-      installment_weeks = Math.max(1, Math.ceil(spanDays / 7))
-    }
 
     const existingSales = await tx.select({ id: sales.id }).from(sales)
     const existingInvoices = await tx.select({ id: invoices.id }).from(invoices)
@@ -511,7 +524,7 @@ export async function createSale(
     const saleIndexLabel = saleId.replace(/\D/g, '').padStart(5, '0')
     const installmentList = (
       isFullyPaid
-        ? buildInstallments(total_amount, 1, now, saleIndexLabel)
+        ? buildFullPaymentInstallment(total_amount, startDay, saleIndexLabel)
         : buildInstallmentsByInterval({
             total: total_amount,
             startDate: startDay,

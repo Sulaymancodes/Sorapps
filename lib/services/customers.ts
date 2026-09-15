@@ -414,18 +414,23 @@ function customerValues(input: CustomerInput) {
   }
 }
 
-export async function createCustomer(input: CustomerInput): Promise<Customer> {
+type DbExecutor = Pick<typeof db, 'select' | 'insert'>
+
+export async function createCustomer(
+  input: CustomerInput,
+  executor: DbExecutor = db
+): Promise<Customer> {
   assertContactRules(input)
   await assertNoDuplicates(input)
 
-  const existing = await db.select({ id: customers.id }).from(customers)
+  const existing = await executor.select({ id: customers.id }).from(customers)
   const id = nextId(
     'CUST',
     existing.map((r) => r.id),
     4
   )
 
-  const [row] = await db
+  const [row] = await executor
     .insert(customers)
     .values({
       id,

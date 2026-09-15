@@ -33,8 +33,8 @@ import {
   addLocalDays,
   parseDateInput,
   previewInstallmentPlan,
-  startOfLocalDay,
   toDateInputValue,
+  todayInLagos,
 } from '@/lib/paygo/schedule'
 import { getLgasForState } from '@/lib/constants/lgas'
 import { createSaleAction } from '@/app/actions/sales'
@@ -369,7 +369,7 @@ export function SaleForm({
       payment_type: 'full',
       payment_method: 'cash',
       installment_interval_days: 7,
-      plan_end_date: toDateInputValue(addLocalDays(startOfLocalDay(new Date()), 28)),
+      plan_end_date: toDateInputValue(addLocalDays(todayInLagos(), 28)),
       discount_percent: 0,
       transport_cost: 0,
       notes: '',
@@ -459,13 +459,14 @@ export function SaleForm({
       total: totals.total,
       endDateIso: planEndDate || '',
       intervalDays: Number(installmentIntervalDays) || 7,
+      startDate: todayInLagos(),
     })
   }, [isInstallment, totals.total, planEndDate, installmentIntervalDays])
 
-  const minPlanEndDate = toDateInputValue(addLocalDays(startOfLocalDay(new Date()), 1))
+  const minPlanEndDate = toDateInputValue(addLocalDays(todayInLagos(), 1))
 
   function applyWeekPreset(weeks: number) {
-    const end = addLocalDays(startOfLocalDay(new Date()), weeks * 7)
+    const end = addLocalDays(todayInLagos(), weeks * 7)
     setValue('plan_end_date', toDateInputValue(end), {
       shouldValidate: true,
       shouldDirty: true,
@@ -837,9 +838,11 @@ export function SaleForm({
         return
       }
       const end = parseDateInput(values.plan_end_date)
-      const start = startOfLocalDay(new Date())
+      const start = todayInLagos()
       if (Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
-        setError('plan_end_date', { message: 'End date must be after today' })
+        setError('plan_end_date', {
+          message: `Plan end date must be after the sale date (${toDateInputValue(start)})`,
+        })
         return
       }
     }
@@ -1015,7 +1018,7 @@ export function SaleForm({
       payment_type: 'full',
       payment_method: 'cash',
       installment_interval_days: 7,
-      plan_end_date: toDateInputValue(addLocalDays(startOfLocalDay(new Date()), 28)),
+      plan_end_date: toDateInputValue(addLocalDays(todayInLagos(), 28)),
       discount_percent: 0,
       transport_cost: 0,
       notes: '',
