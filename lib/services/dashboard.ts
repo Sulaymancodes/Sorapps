@@ -30,7 +30,14 @@ import { APPROVED_DEPLOYMENT_AREAS } from '@/lib/constants/deployment-areas'
 import { NIGERIAN_STATES } from '@/lib/constants/options'
 import { listProducts } from '@/lib/services/products'
 
-export type DashboardPeriod = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'custom'
+export type DashboardPeriod =
+  | 'all'
+  | 'day'
+  | 'week'
+  | 'month'
+  | 'quarter'
+  | 'year'
+  | 'custom'
 
 export type BeneficiaryStatusFilter =
   | ''
@@ -104,7 +111,15 @@ export function resolveDashboardRange(
   filters: Pick<DashboardFilters, 'period' | 'from' | 'to'>,
   now = new Date()
 ): { start: Date; end: Date; label: string } {
-  const period = filters.period || 'month'
+  const period = filters.period || 'all'
+
+  if (period === 'all') {
+    return {
+      start: new Date(2000, 0, 1),
+      end: endOfDay(now),
+      label: 'All time',
+    }
+  }
 
   if (period === 'custom') {
     const from = parseDateInput(filters.from) ?? startOfMonth(now)
@@ -188,9 +203,9 @@ export function parseDashboardFilters(
 
   const periodRaw = one('period')
   const period = (
-    ['day', 'week', 'month', 'quarter', 'year', 'custom'].includes(periodRaw)
+    ['all', 'day', 'week', 'month', 'quarter', 'year', 'custom'].includes(periodRaw)
       ? periodRaw
-      : 'month'
+      : 'all'
   ) as DashboardPeriod
 
   return {

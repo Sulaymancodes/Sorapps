@@ -23,6 +23,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect'
 import { CustomerPicker } from '@/components/forms/CustomerPicker'
 import { SiteVerificationPanel } from '@/components/forms/SiteVerificationPanel'
 import { DocumentUploader } from '@/components/documents/DocumentUploader'
+import { SerialBarcodeField } from '@/components/forms/SerialBarcodeField'
 import {
   BUSINESS_TYPES,
   GUARDIAN_RELATIONSHIPS,
@@ -1661,12 +1662,16 @@ export function SaleForm({
                 />
               </div>
               <div>
-                <Label htmlFor={`items.${index}.serial_number`}>Serial number</Label>
-                <Input
+                <SerialBarcodeField
                   id={`items.${index}.serial_number`}
+                  value={watchedItems?.[index]?.serial_number || ''}
+                  onChange={(next) =>
+                    setValue(`items.${index}.serial_number`, next, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    })
+                  }
                   placeholder="Device serial…"
-                  autoComplete="off"
-                  {...register(`items.${index}.serial_number`)}
                 />
               </div>
               {!productLocked ? (

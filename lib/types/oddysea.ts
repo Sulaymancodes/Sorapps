@@ -1,4 +1,11 @@
-export type OddyseaPeriod = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'custom'
+export type OddyseaPeriod =
+  | 'all'
+  | 'day'
+  | 'week'
+  | 'month'
+  | 'quarter'
+  | 'year'
+  | 'custom'
 
 export type OddyseaFilters = {
   period: OddyseaPeriod

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useTransition } from 'react'
+import { useTransition } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   Activity,
@@ -26,12 +26,9 @@ import { KpiCard } from '@/components/common/KpiCard'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
-import { SearchableSelect } from '@/components/common/SearchableSelect'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
-import { getLgasForState } from '@/lib/constants/lgas'
 import { formatCurrency, formatDate, formatNumber } from '@/lib/utils/formatting'
 import { COLORS } from '@/lib/constants/colors'
 import { cn } from '@/lib/utils'
@@ -61,6 +58,7 @@ function ChartTooltip({ active, payload, label }: any) {
 }
 
 const PERIODS: { id: DashboardPeriod; label: string }[] = [
+  { id: 'all', label: 'All time' },
   { id: 'day', label: 'Daily' },
   { id: 'week', label: 'Weekly' },
   { id: 'month', label: 'Monthly' },
@@ -71,88 +69,26 @@ const PERIODS: { id: DashboardPeriod; label: string }[] = [
 
 function filtersToQuery(filters: DashboardFilters): string {
   const params = new URLSearchParams()
-  if (filters.period && filters.period !== 'month') params.set('period', filters.period)
+  if (filters.period && filters.period !== 'all') params.set('period', filters.period)
   if (filters.period === 'custom') {
     if (filters.from) params.set('from', filters.from)
     if (filters.to) params.set('to', filters.to)
   }
-  if (filters.state) params.set('state', filters.state)
-  if (filters.lga) params.set('lga', filters.lga)
-  if (filters.deployment_area) params.set('area', filters.deployment_area)
-  if (filters.agent_id) params.set('agent', filters.agent_id)
-  if (filters.activation_status) params.set('activation', filters.activation_status)
-  if (filters.payment_status) params.set('payment', filters.payment_status)
-  if (filters.serial) params.set('serial', filters.serial)
-  if (filters.beneficiary_status) params.set('beneficiary', filters.beneficiary_status)
   const qs = params.toString()
   return qs ? `?${qs}` : ''
 }
 
-function activeFilterCount(filters: DashboardFilters) {
-  let n = 0
-  if (filters.state) n++
-  if (filters.lga) n++
-  if (filters.deployment_area) n++
-  if (filters.agent_id) n++
-  if (filters.activation_status) n++
-  if (filters.payment_status) n++
-  if (filters.serial) n++
-  if (filters.beneficiary_status) n++
-  if (filters.period === 'custom' && (filters.from || filters.to)) n++
-  return n
-}
 
 export function DashboardPageClient({
   data,
-  options,
 }: {
   data: ManagementDashboard
-  options: DashboardFilterOptions
+  options?: DashboardFilterOptions
 }) {
   const router = useRouter()
   const pathname = usePathname()
   const [pending, startTransition] = useTransition()
   const filters = data.filters
-
-  const lgaOptions = useMemo(() => getLgasForState(filters.state || ''), [filters.state])
-
-  const areaOptions = useMemo(
-    () => [
-      'All areas',
-      ...options.deployment_areas.map(
-        (a) => `${a.name} (${a.subsidy_level.replace('_', ' ')})`
-      ),
-    ],
-    [options.deployment_areas]
-  )
-
-  const areaLabelToId = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const a of options.deployment_areas) {
-      map.set(`${a.name} (${a.subsidy_level.replace('_', ' ')})`, a.id)
-    }
-    return map
-  }, [options.deployment_areas])
-
-  const selectedAreaLabel = useMemo(() => {
-    if (!filters.deployment_area) return 'All areas'
-    const a = options.deployment_areas.find((x) => x.id === filters.deployment_area)
-    return a ? `${a.name} (${a.subsidy_level.replace('_', ' ')})` : 'All areas'
-  }, [filters.deployment_area, options.deployment_areas])
-
-  const agentOptions = useMemo(
-    () => ['All agents', ...options.agents.map((a) => a.name)],
-    [options.agents]
-  )
-  const agentLabelToId = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const a of options.agents) map.set(a.name, a.id)
-    return map
-  }, [options.agents])
-  const selectedAgentLabel = useMemo(() => {
-    if (!filters.agent_id) return 'All agents'
-    return options.agents.find((a) => a.id === filters.agent_id)?.name || 'All agents'
-  }, [filters.agent_id, options.agents])
 
   function apply(next: DashboardFilters) {
     const qs = filtersToQuery(next)
@@ -162,30 +98,14 @@ export function DashboardPageClient({
   }
 
   function patch(partial: Partial<DashboardFilters>) {
-    const next = { ...filters, ...partial }
-    if (partial.state !== undefined && partial.state !== filters.state) {
-      next.lga = ''
-    }
-    if (partial.deployment_area) {
-      const area = options.deployment_areas.find((a) => a.id === partial.deployment_area)
-      if (area && !next.state) next.state = area.state
-    }
-    apply(next)
-  }
-
-  function clearFilters() {
-    apply({ period: filters.period === 'custom' ? 'month' : filters.period })
+    apply({ ...filters, ...partial })
   }
 
   const maxProduct = data.top_products[0]?.value || 1
-  const filterCount = activeFilterCount(filters)
 
   return (
     <PageShell>
-      <PageHeader
-        title="Dashboard"
-        description={`Management view · ${data.range.label}${pending ? ' · updating…' : ''}`}
-      />
+      <PageHeader title="Dashboard" description={pending ? 'Updating…' : undefined} />
 
       <div className="flex flex-wrap gap-2">
         {PERIODS.map((p) => (
@@ -201,169 +121,28 @@ export function DashboardPageClient({
         ))}
       </div>
 
-      <Panel
-        title="Filters"
-        description="State, LGA, deployment area, agent, status, serial, and beneficiary"
-      >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filters.period === 'custom' && (
-            <>
-              <div className="space-y-1.5">
-                <Label htmlFor="from">From</Label>
-                <Input
-                  id="from"
-                  type="date"
-                  defaultValue={filters.from || ''}
-                  onChange={(e) => patch({ from: e.target.value })}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="to">To</Label>
-                <Input
-                  id="to"
-                  type="date"
-                  defaultValue={filters.to || ''}
-                  onChange={(e) => patch({ to: e.target.value })}
-                />
-              </div>
-            </>
-          )}
-
+      {filters.period === 'custom' && (
+        <div className="grid max-w-md grid-cols-2 gap-3">
           <div className="space-y-1.5">
-            <Label>State</Label>
-            <SearchableSelect
-              options={['All states', ...options.states]}
-              value={filters.state || 'All states'}
-              onChange={(v) => patch({ state: v === 'All states' ? '' : v })}
-              placeholder="Search state…"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>LGA</Label>
-            <SearchableSelect
-              options={filters.state ? ['All LGAs', ...lgaOptions] : ['Select a state first']}
-              value={filters.lga || (filters.state ? 'All LGAs' : 'Select a state first')}
-              onChange={(v) =>
-                patch({ lga: v === 'All LGAs' || v === 'Select a state first' ? '' : v })
-              }
-              placeholder="Search LGA…"
-              disabled={!filters.state}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>Deployment area</Label>
-            <SearchableSelect
-              options={areaOptions}
-              value={selectedAreaLabel}
-              onChange={(v) =>
-                patch({
-                  deployment_area: v === 'All areas' ? '' : areaLabelToId.get(v) || '',
-                })
-              }
-              placeholder="Search area…"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>Representative / agent</Label>
-            <SearchableSelect
-              options={agentOptions}
-              value={selectedAgentLabel}
-              onChange={(v) =>
-                patch({ agent_id: v === 'All agents' ? '' : agentLabelToId.get(v) || '' })
-              }
-              placeholder="Search agent…"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="payment">Payment status</Label>
-            <Select
-              id="payment"
-              value={filters.payment_status || ''}
-              onChange={(e) => patch({ payment_status: e.target.value })}
-            >
-              <option value="">All payment statuses</option>
-              {options.payment_statuses.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="activation">Activation status</Label>
-            <Select
-              id="activation"
-              value={filters.activation_status || ''}
-              onChange={(e) => patch({ activation_status: e.target.value })}
-            >
-              <option value="">All activation statuses</option>
-              {options.activation_statuses.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="beneficiary">Beneficiary status</Label>
-            <Select
-              id="beneficiary"
-              value={filters.beneficiary_status || ''}
-              onChange={(e) =>
-                patch({
-                  beneficiary_status: e.target.value as DashboardFilters['beneficiary_status'],
-                })
-              }
-            >
-              <option value="">All beneficiaries</option>
-              {options.beneficiary_statuses.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="serial">Device / serial</Label>
+            <Label htmlFor="from">From</Label>
             <Input
-              id="serial"
-              placeholder="Search serial…"
-              defaultValue={filters.serial || ''}
-              onBlur={(e) => {
-                const next = e.target.value.trim()
-                if (next !== (filters.serial || '')) patch({ serial: next })
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  const next = (e.target as HTMLInputElement).value.trim()
-                  patch({ serial: next })
-                }
-              }}
+              id="from"
+              type="date"
+              defaultValue={filters.from || ''}
+              onChange={(e) => patch({ from: e.target.value })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="to">To</Label>
+            <Input
+              id="to"
+              type="date"
+              defaultValue={filters.to || ''}
+              onChange={(e) => patch({ to: e.target.value })}
             />
           </div>
         </div>
-
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <p className="text-xs text-muted-foreground">
-            {filterCount > 0
-              ? `${filterCount} active filter${filterCount === 1 ? '' : 's'}`
-              : 'No dimension filters — showing full period'}
-          </p>
-          {filterCount > 0 && (
-            <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
-              Clear filters
-            </Button>
-          )}
-        </div>
-      </Panel>
+      )}
 
       <div
         className={cn(
@@ -410,7 +189,7 @@ export function DashboardPageClient({
         <Panel title="Revenue & collections" description={`Trend for ${data.range.label}`}>
           {data.series.every((d) => d.revenue === 0 && d.collected === 0) ? (
             <p className="py-16 text-center text-sm text-muted-foreground">
-              No sales in this view — adjust period or filters
+              No sales in this view — adjust period
             </p>
           ) : (
             <ResponsiveContainer width="100%" height={280}>
@@ -481,7 +260,7 @@ export function DashboardPageClient({
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Panel title="Sales by payment status" description="Counts in the current filter set">
+        <Panel title="Sales by payment status" description="Counts in the current period">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {data.by_payment_status.map((row) => (
               <div
@@ -497,7 +276,7 @@ export function DashboardPageClient({
           </div>
         </Panel>
 
-        <Panel title="Activation status" description="Per sale in the current filter set">
+        <Panel title="Activation status" description="Per sale in the current period">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {data.by_activation_status.map((row) => (
               <div
@@ -588,10 +367,10 @@ export function DashboardPageClient({
         </Panel>
       </div>
 
-      <Panel title="Sales in view" description="Latest matches for the current filters">
+      <Panel title="Sales in view" description={`Latest sales for ${data.range.label}`}>
         {data.recent_sales.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted-foreground">
-            No sales match this period and filter set
+            No sales match this period
           </p>
         ) : (
           <div className="overflow-x-auto">

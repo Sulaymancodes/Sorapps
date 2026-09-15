@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import type { OddyseaFilters, OddyseaPeriod, OddyseaReport } from '@/lib/types/oddysea'
 
 const PERIODS: { id: OddyseaPeriod; label: string }[] = [
+  { id: 'all', label: 'All time' },
   { id: 'day', label: 'Daily' },
   { id: 'week', label: 'Weekly' },
   { id: 'month', label: 'Monthly' },
@@ -39,7 +40,7 @@ type SectionId = (typeof SECTIONS)[number]['id']
 
 function filtersToQuery(filters: OddyseaFilters): string {
   const params = new URLSearchParams()
-  if (filters.period && filters.period !== 'month') params.set('period', filters.period)
+  if (filters.period && filters.period !== 'all') params.set('period', filters.period)
   if (filters.period === 'custom') {
     if (filters.from) params.set('from', filters.from)
     if (filters.to) params.set('to', filters.to)
@@ -224,13 +225,20 @@ export function ReportsPageClient({
             type="button"
             size="sm"
             variant={filters.period === p.id ? 'default' : 'outline'}
-            onClick={() => patch({ period: p.id })}
+            onClick={() =>
+              patch(
+                p.id === 'all'
+                  ? { period: 'all', state: '', lga: '', deployment_area: '', from: '', to: '' }
+                  : { period: p.id }
+              )
+            }
           >
             {p.label}
           </Button>
         ))}
       </div>
 
+      {filters.period !== 'all' && (
       <Panel title="Report filters" description="Scope the ODDYSEA pack by period and geography">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {filters.period === 'custom' && (
@@ -291,6 +299,7 @@ export function ReportsPageClient({
           </div>
         </div>
       </Panel>
+      )}
 
       <div className={cn('grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5', pending && 'opacity-70')}>
         {[
