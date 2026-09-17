@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { CloudOff, WifiOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -11,6 +13,7 @@ import { Panel } from '@/components/common/Panel'
 import { SearchableSelect } from '@/components/common/SearchableSelect'
 import { DocumentUploader } from '@/components/documents/DocumentUploader'
 import { SoftDuplicateAlert } from '@/components/forms/SoftDuplicateAlert'
+import { useOfflineSyncOptional } from '@/components/offline/offline-sync-context'
 import {
   DARES_CUSTOMER_CATEGORIES,
   DARES_CUSTOMER_TYPES,
@@ -24,6 +27,13 @@ import {
   scanBeneficiaryDuplicatesAction,
   updateCustomerAction,
 } from '@/app/actions/customers'
+import {
+  upsertCustomerDraft,
+  type CustomerDraft,
+  type CustomerDraftPayload,
+} from '@/lib/offline/customer-drafts'
+import type { PendingDocument } from '@/lib/offline/sale-drafts'
+import { isBrowserOnline, isLikelyNetworkError } from '@/lib/offline/network'
 import type { DuplicateMatch } from '@/lib/services/customers'
 import type { Customer, CustomerDocument, CustomerInput, DocumentUploadInput } from '@/lib/types/crm'
 
@@ -33,6 +43,7 @@ interface CustomerFormProps {
   customer?: Customer
   existingDocuments?: CustomerDocument[]
   mode?: 'create' | 'edit'
+  draft?: CustomerDraft
 }
 
 function isCompletePhone(value: string) {
@@ -43,14 +54,37 @@ function isCompletePhone(value: string) {
 
 const DUP_DEBOUNCE_MS = 600
 
+function sourceValue<K extends keyof CustomerInput>(
+  customer: Customer | undefined,
+  draft: CustomerDraft | undefined,
+  key: K,
+  fallback: CustomerInput[K]
+) {
+  const fromCustomer = customer?.[key]
+  if (fromCustomer !== undefined && fromCustomer !== null && fromCustomer !== '') {
+    return fromCustomer as CustomerInput[K]
+  }
+  const fromDraft = draft?.payload[key]
+  if (fromDraft !== undefined && fromDraft !== null && fromDraft !== '') {
+    return fromDraft as CustomerInput[K]
+  }
+  return fallback
+}
+
 export function CustomerForm({
   customer,
   existingDocuments = [],
   mode = 'create',
+  draft,
 }: CustomerFormProps) {
   const router = useRouter()
+  const offline = useOfflineSyncOptional()
+  const isOnline = offline?.isOnline ?? true
   const [formError, setFormError] = useState<string | null>(null)
-  const [documents, setDocuments] = useState<DocumentUploadInput[]>([])
+  const [offlineSaved, setOfflineSaved] = useState<string | null>(null)
+  const [documents, setDocuments] = useState<PendingDocument[]>(
+    draft?.payload.documents ?? []
+  )
   const [softMatches, setSoftMatches] = useState<DuplicateMatch[]>([])
   const [hardMatches, setHardMatches] = useState<DuplicateMatch[]>([])
   const [softAcknowledged, setSoftAcknowledged] = useState(false)
@@ -60,36 +94,37 @@ export function CustomerForm({
     handleSubmit,
     setValue,
     setError,
+    reset,
     control,
     formState: { errors, isSubmitting },
   } = useForm<CustomerFormValues>({
     defaultValues: {
-      name: customer?.name || '',
-      email: customer?.email || '',
-      phone: customer?.phone || '',
-      nin: customer?.nin || '',
-      bvn: customer?.bvn || '',
-      address: customer?.address || '',
-      address_house_number: customer?.address_house_number || '',
-      address_building_features: customer?.address_building_features || '',
-      address_street: customer?.address_street || '',
-      address_landmark: customer?.address_landmark || '',
-      city: customer?.city || '',
-      state: customer?.state || '',
-      lga: customer?.lga || '',
-      business_type: customer?.business_type || BUSINESS_TYPES[0],
-      gender: customer?.gender || '',
-      customer_category: customer?.customer_category || '',
-      customer_type: customer?.customer_type || '',
-      alternate_phone: customer?.alternate_phone || '',
-      credit_limit: customer?.credit_limit || 500000,
-      is_minor: customer?.is_minor || false,
-      guardian_name: customer?.guardian_name || '',
-      guardian_phone: customer?.guardian_phone || '',
-      guardian_relationship: customer?.guardian_relationship || '',
-      next_of_kin_name: customer?.next_of_kin_name || '',
-      next_of_kin_phone: customer?.next_of_kin_phone || '',
-      next_of_kin_relationship: customer?.next_of_kin_relationship || '',
+      name: sourceValue(customer, draft, 'name', ''),
+      email: sourceValue(customer, draft, 'email', ''),
+      phone: sourceValue(customer, draft, 'phone', ''),
+      nin: sourceValue(customer, draft, 'nin', ''),
+      bvn: sourceValue(customer, draft, 'bvn', ''),
+      address: sourceValue(customer, draft, 'address', ''),
+      address_house_number: sourceValue(customer, draft, 'address_house_number', ''),
+      address_building_features: sourceValue(customer, draft, 'address_building_features', ''),
+      address_street: sourceValue(customer, draft, 'address_street', ''),
+      address_landmark: sourceValue(customer, draft, 'address_landmark', ''),
+      city: sourceValue(customer, draft, 'city', ''),
+      state: sourceValue(customer, draft, 'state', ''),
+      lga: sourceValue(customer, draft, 'lga', ''),
+      business_type: sourceValue(customer, draft, 'business_type', BUSINESS_TYPES[0]),
+      gender: sourceValue(customer, draft, 'gender', ''),
+      customer_category: sourceValue(customer, draft, 'customer_category', ''),
+      customer_type: sourceValue(customer, draft, 'customer_type', ''),
+      alternate_phone: sourceValue(customer, draft, 'alternate_phone', ''),
+      credit_limit: sourceValue(customer, draft, 'credit_limit', 500000),
+      is_minor: sourceValue(customer, draft, 'is_minor', false),
+      guardian_name: sourceValue(customer, draft, 'guardian_name', ''),
+      guardian_phone: sourceValue(customer, draft, 'guardian_phone', ''),
+      guardian_relationship: sourceValue(customer, draft, 'guardian_relationship', ''),
+      next_of_kin_name: sourceValue(customer, draft, 'next_of_kin_name', ''),
+      next_of_kin_phone: sourceValue(customer, draft, 'next_of_kin_phone', ''),
+      next_of_kin_relationship: sourceValue(customer, draft, 'next_of_kin_relationship', ''),
     },
   })
 
@@ -135,6 +170,7 @@ export function CustomerForm({
   const lgaOptions = useMemo(() => getLgasForState(selectedState || ''), [selectedState])
 
   useEffect(() => {
+    if (!isOnline) return
     const name = watchedName.trim()
     const timer = window.setTimeout(() => {
       void (async () => {
@@ -143,21 +179,25 @@ export function CustomerForm({
           setHardMatches([])
           return
         }
-        const result = await scanBeneficiaryDuplicatesAction({
-          name: name.length >= 3 ? name : undefined,
-          phone: watchedPhone || watchedGuardianPhone || undefined,
-          nin: watchedNin || undefined,
-          bvn: watchedBvn || undefined,
-          city: watchedCity || undefined,
-          state: selectedState || undefined,
-          lga: selectedLga || undefined,
-          address: composedAddress || undefined,
-          exclude_id: customer?.id,
-        })
-        if (!result.success) return
-        setSoftMatches(result.data.soft)
-        setHardMatches(result.data.hard)
-        if (!result.data.soft.length) setSoftAcknowledged(false)
+        try {
+          const result = await scanBeneficiaryDuplicatesAction({
+            name: name.length >= 3 ? name : undefined,
+            phone: watchedPhone || watchedGuardianPhone || undefined,
+            nin: watchedNin || undefined,
+            bvn: watchedBvn || undefined,
+            city: watchedCity || undefined,
+            state: selectedState || undefined,
+            lga: selectedLga || undefined,
+            address: composedAddress || undefined,
+            exclude_id: customer?.id || draft?.remoteId,
+          })
+          if (!result.success) return
+          setSoftMatches(result.data.soft)
+          setHardMatches(result.data.hard)
+          if (!result.data.soft.length) setSoftAcknowledged(false)
+        } catch {
+          // Duplicate scan requires the network; ignore while unreachable.
+        }
       })()
     }, DUP_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
@@ -172,10 +212,26 @@ export function CustomerForm({
     selectedLga,
     watchedGuardianPhone,
     customer?.id,
+    draft?.remoteId,
+    isOnline,
   ])
+
+  async function saveDraft(payload: CustomerDraftPayload) {
+    const saved = await upsertCustomerDraft({
+      localId: draft?.localId,
+      mode: draft?.mode ?? (mode === 'edit' && customer ? 'edit' : 'create'),
+      remoteId: draft?.remoteId ?? customer?.id,
+      payload,
+      status: 'pending',
+      syncError: null,
+    })
+    await offline?.refreshDrafts()
+    return saved
+  }
 
   const onSubmit = async (values: CustomerFormValues) => {
     setFormError(null)
+    setOfflineSaved(null)
     if (!values.name.trim() || values.name.trim().length < 2) {
       setError('name', { message: 'Enter the customer name' })
       return
@@ -222,7 +278,8 @@ export function CustomerForm({
     if (
       !values.state.trim() ||
       (!(NIGERIAN_STATES as readonly string[]).includes(values.state) &&
-        values.state !== customer?.state)
+        values.state !== customer?.state &&
+        values.state !== draft?.payload.state)
     ) {
       setError('state', { message: 'Select a Nigerian state' })
       return
@@ -235,42 +292,9 @@ export function CustomerForm({
       landmark: values.address_landmark,
     })
 
-    const scan = await scanBeneficiaryDuplicatesAction({
-      name: values.name.trim(),
-      phone: values.phone || values.guardian_phone,
-      nin: values.nin,
-      bvn: values.bvn,
-      city: values.city,
-      state: values.state,
-      lga: values.lga,
-      address: composed,
-      exclude_id: customer?.id,
-    })
-    if (!scan.success) {
-      setFormError(scan.error)
-      return
-    }
-    if (scan.data.hard.length) {
-      setHardMatches(scan.data.hard)
-      const first = scan.data.hard[0]
-      setFormError(
-        `Duplicate ${first.matched_fields?.[0] || 'record'} — already used by ${first.name}. Fix before saving.`
-      )
-      return
-    }
-    if (scan.data.soft.length) {
-      setSoftMatches(scan.data.soft)
-      if (!softAcknowledged) {
-        setFormError(
-          'Possible duplicate beneficiary — review the soft-match alert and confirm to continue.'
-        )
-        return
-      }
-    }
-
     const customerType = (values.customer_type || '').trim()
 
-    const payload = {
+    const payload: CustomerDraftPayload = {
       ...values,
       name: values.name.trim(),
       email: values.email?.trim() || '',
@@ -297,29 +321,157 @@ export function CustomerForm({
       next_of_kin_name: (values.next_of_kin_name || '').trim(),
       next_of_kin_phone: (values.next_of_kin_phone || '').trim(),
       next_of_kin_relationship: (values.next_of_kin_relationship || '').trim(),
-      documents: documents.length ? documents : undefined,
+      documents: documents.filter((d) => d.file_url).length
+        ? (documents.filter((d) => d.file_url) as DocumentUploadInput[])
+        : undefined,
     }
 
-    const result =
-      mode === 'edit' && customer
-        ? await updateCustomerAction(customer.id, payload)
-        : await createCustomerAction(payload)
+    const queueOffline = async (message: string) => {
+      try {
+        await saveDraft(payload)
+        setOfflineSaved(message)
+        if (!draft && mode === 'create') {
+          reset()
+          setDocuments([])
+        }
+      } catch {
+        setFormError(
+          'Could not save this customer on this device. Check that browser storage is available and try again.'
+        )
+      }
+    }
 
-    if (!result.success) {
-      setFormError(result.error)
+    const online = isOnline && isBrowserOnline()
+    if (!online) {
+      await queueOffline(
+        'Saved on this device. It will sync automatically when you are back online, or tap Sync now in the header.'
+      )
       return
     }
 
-    if (mode === 'edit') {
-      router.push('/customers')
-    } else {
-      router.push(`/customers?created=${result.data.id}`)
+    try {
+      const scan = await scanBeneficiaryDuplicatesAction({
+        name: values.name.trim(),
+        phone: values.phone || values.guardian_phone,
+        nin: values.nin,
+        bvn: values.bvn,
+        city: values.city,
+        state: values.state,
+        lga: values.lga,
+        address: composed,
+        exclude_id: customer?.id || draft?.remoteId,
+      })
+      if (!scan.success) {
+        if (isLikelyNetworkError(scan.error)) {
+          await queueOffline(
+            'No network while checking duplicates. Customer saved as a draft and will sync later.'
+          )
+          return
+        }
+        setFormError(scan.error)
+        return
+      }
+      if (scan.data.hard.length) {
+        setHardMatches(scan.data.hard)
+        const first = scan.data.hard[0]
+        setFormError(
+          `Duplicate ${first.matched_fields?.[0] || 'record'} — already used by ${first.name}. Fix before saving.`
+        )
+        return
+      }
+      if (scan.data.soft.length) {
+        setSoftMatches(scan.data.soft)
+        if (!softAcknowledged) {
+          setFormError(
+            'Possible duplicate beneficiary — review the soft-match alert and confirm to continue.'
+          )
+          return
+        }
+      }
+    } catch (error) {
+      if (isLikelyNetworkError(error)) {
+        await queueOffline(
+          'No network while checking duplicates. Customer saved as a draft and will sync later.'
+        )
+        return
+      }
+      setFormError(error instanceof Error ? error.message : 'Could not check duplicates')
+      return
     }
-    router.refresh()
+
+    try {
+      const actionPayload = payload as Parameters<typeof createCustomerAction>[0]
+      const result =
+        (draft?.mode ?? mode) === 'edit' && (customer || draft?.remoteId)
+          ? await updateCustomerAction(customer?.id || draft!.remoteId!, actionPayload)
+          : await createCustomerAction(actionPayload)
+
+      if (!result.success) {
+        if (isLikelyNetworkError(result.error)) {
+          await queueOffline(
+            'No network while saving. Customer saved as a draft and will sync later.'
+          )
+          return
+        }
+        setFormError(result.error)
+        return
+      }
+
+      if (draft?.localId) {
+        await offline?.removeDraft(draft.localId)
+      }
+
+      if (mode === 'edit' || draft?.mode === 'edit') {
+        router.push('/customers')
+      } else {
+        router.push(`/customers?created=${result.data.id}`)
+      }
+      router.refresh()
+    } catch (error) {
+      if (isLikelyNetworkError(error)) {
+        await queueOffline(
+          'No network while saving. Customer saved as a draft and will sync later.'
+        )
+        return
+      }
+      setFormError(error instanceof Error ? error.message : 'Failed to save customer')
+    }
   }
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+      {!isOnline && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100">
+          <WifiOff className="mt-0.5 size-4 shrink-0" />
+          <p>
+            You are offline. This customer will be saved as a draft on this device and synced when
+            the network returns.
+          </p>
+        </div>
+      )}
+
+      {draft && (
+        <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+          <CloudOff className="mt-0.5 size-4 shrink-0 text-primary" />
+          <p>
+            Editing a local draft
+            {draft.status === 'failed' && draft.syncError ? ` — ${draft.syncError}` : ''}. Save
+            again to update it, or sync from the header when you are online.
+          </p>
+        </div>
+      )}
+
+      {offlineSaved && (
+        <div className="rounded-lg border border-emerald-300/50 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-100">
+          <p>{offlineSaved}</p>
+          <Link
+            href="/customers/drafts"
+            className="mt-1 inline-block text-xs font-medium underline-offset-2 hover:underline"
+          >
+            View drafts
+          </Link>
+        </div>
+      )}
       <Panel title="Customer details" description="Contact and business information">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="md:col-span-2">
@@ -696,6 +848,12 @@ export function CustomerForm({
       </Panel>
 
       <Panel title="Physical forms" description="Upload KYC / sales paperwork (JPG, PNG, PDF)">
+        {!isOnline && (
+          <p className="mb-3 rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-100">
+            Document uploads need a connection. Save the customer draft now and attach files after
+            you reconnect.
+          </p>
+        )}
         {existingDocuments.length > 0 && (
           <ul className="mb-4 space-y-1.5 text-sm">
             {existingDocuments.map((d) => (
@@ -726,10 +884,22 @@ export function CustomerForm({
       )}
 
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={isSubmitting || hardMatches.length > 0}>
-          {mode === 'edit' ? 'Save changes' : 'Create customer'}
+        <Button type="submit" disabled={isSubmitting || (isOnline && hardMatches.length > 0)}>
+          {!isOnline
+            ? draft
+              ? 'Update draft'
+              : 'Save draft offline'
+            : draft
+              ? 'Save and sync'
+              : mode === 'edit'
+                ? 'Save changes'
+                : 'Create customer'}
         </Button>
-        <Button type="button" variant="outline" onClick={() => router.push('/customers')}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => router.push(draft ? '/customers/drafts' : '/customers')}
+        >
           Cancel
         </Button>
       </div>

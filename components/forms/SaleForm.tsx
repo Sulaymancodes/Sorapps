@@ -49,14 +49,22 @@ import {
   checkCustomerDuplicateAction,
   scanBeneficiaryDuplicatesAction,
 } from '@/app/actions/customers'
-import { createSitePhotoUploadUrlAction } from '@/app/actions/uploads'
 import { SoftDuplicateAlert } from '@/components/forms/SoftDuplicateAlert'
+import { OfflineDraftSavedModal } from '@/components/offline/OfflineDraftSavedModal'
 import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import { cn } from '@/lib/utils'
+import {
+  deleteSaleDraft,
+  getSaleDraft,
+  upsertSaleDraft,
+  type PendingDocument,
+  type SaleDraftFormValues,
+} from '@/lib/offline/sale-drafts'
+import { isBrowserOnline, isLikelyNetworkError } from '@/lib/offline/network'
+import { uploadPendingDocuments, uploadSitePhotoFile } from '@/lib/offline/upload-blobs'
 import type { DuplicateMatch as SoftDuplicateMatch } from '@/lib/services/customers'
 import type {
   Customer,
-  DocumentUploadInput,
   PaymentType,
   Product,
   SaleSiteGpsInput,
@@ -333,11 +341,13 @@ export function SaleForm({
   customers,
   products,
   forcedGeo,
+  draftId,
 }: {
   customers: Customer[]
   products: Product[]
   /** When set (agent territory), state/LGA are locked and cannot be changed. */
   forcedGeo?: { state: string; lga: string } | null
+  draftId?: string
 }) {
   const router = useRouter()
   const [geoLocked, setGeoLocked] = useState(false)
@@ -351,7 +361,10 @@ export function SaleForm({
   const [softMatches, setSoftMatches] = useState<SoftDuplicateMatch[]>([])
   const [softAcknowledged, setSoftAcknowledged] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
-  const [documents, setDocuments] = useState<DocumentUploadInput[]>([])
+  const [documents, setDocuments] = useState<PendingDocument[]>([])
+  const [activeDraftId, setActiveDraftId] = useState<string | undefined>(draftId)
+  const [draftSavedOpen, setDraftSavedOpen] = useState(false)
+  const [isOnline, setIsOnline] = useState(true)
 
   const {
     register,
@@ -489,6 +502,47 @@ export function SaleForm({
     }, 0)
     return { subtotal, total: Math.round(subtotal) }
   }, [watchedItems, products])
+
+  useEffect(() => {
+    setIsOnline(isBrowserOnline())
+    const onOnline = () => setIsOnline(true)
+    const onOffline = () => setIsOnline(false)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    return () => {
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!draftId) return
+    void getSaleDraft(draftId).then((draft) => {
+      if (!draft) return
+      setActiveDraftId(draft.localId)
+      reset(draft.values)
+      setSiteGps(draft.siteGps)
+      const photo = draft.sitePhoto as File | Blob | null | undefined
+      setSitePhotoFile(
+        photo instanceof File
+          ? photo
+          : photo
+            ? new File([photo], 'site.jpg', { type: photo.type || 'image/jpeg' })
+            : null
+      )
+      setDocuments(
+        (draft.documents || []).map((doc) => {
+          if (doc.file && !(doc.file instanceof File)) {
+            return {
+              ...doc,
+              file: new File([doc.file], doc.file_name, { type: doc.content_type }),
+            }
+          }
+          return doc
+        })
+      )
+    })
+  }, [draftId, reset])
 
   // Auto-fill retail cost from product totals when still 0
   useEffect(() => {
@@ -757,6 +811,113 @@ export function SaleForm({
     setProductLocked(false)
   }
 
+  async function saveSaleAsDraft(values: SaleFormValues) {
+    if (!siteGps?.locked || !sitePhotoFile) {
+      throw new Error('Site photo and GPS are required')
+    }
+    const customerName =
+      values.customer_mode === 'new'
+        ? values.new_customer.name.trim()
+        : customers.find((c) => c.id === values.customer_id)?.name || 'Existing customer'
+    const saved = await upsertSaleDraft({
+      localId: activeDraftId,
+      label: customerName,
+      values: values as SaleDraftFormValues,
+      siteGps,
+      sitePhoto: sitePhotoFile,
+      documents,
+      status: 'pending',
+      syncError: null,
+    })
+    setActiveDraftId(saved.localId)
+    return saved
+  }
+
+  function resetFormAfterQueue(values: SaleFormValues) {
+    const lock = readGeoLock()
+    const keepState = lock.locked ? lock.state : values.new_customer.state
+    const keepLga = lock.locked ? lock.lga : values.new_customer.lga
+    if (lock.locked) {
+      writeGeoLock({ locked: true, state: keepState, lga: keepLga })
+    }
+
+    const productLock = readProductLock()
+    const keepProductId = productLock.locked
+      ? productLock.product_id
+      : values.items[0]?.product_id || ''
+    const keepQty = productLock.locked
+      ? productLock.quantity
+      : Number(values.items[0]?.quantity) || 1
+    if (productLock.locked && keepProductId) {
+      writeProductLock({
+        locked: true,
+        product_id: keepProductId,
+        quantity: keepQty,
+      })
+    }
+
+    reset({
+      customer_mode: 'new',
+      customer_id: '',
+      new_customer: {
+        name: '',
+        email: '',
+        phone: '',
+        alternate_phone: '',
+        nin: '',
+        bvn: '',
+        address: '',
+        address_house_number: '',
+        address_building_features: '',
+        address_street: '',
+        address_landmark: '',
+        city: '',
+        state: keepState,
+        lga: keepLga,
+        business_type: DARES_CUSTOMER_TYPES[0],
+        gender: '',
+        customer_category: '',
+        customer_type: DARES_CUSTOMER_TYPES[0],
+        is_minor: false,
+        guardian_name: '',
+        guardian_phone: '',
+        guardian_relationship: '',
+        next_of_kin_name: '',
+        next_of_kin_phone: '',
+        next_of_kin_relationship: '',
+      },
+      payment_type: 'full',
+      payment_method: 'cash',
+      installment_interval_days: 7,
+      plan_end_date: toDateInputValue(addLocalDays(todayInLagos(), 28)),
+      discount_percent: 0,
+      transport_cost: 0,
+      notes: '',
+      dares_type_of_payment: '',
+      dares_payment_plan: 'Full Payment',
+      retail_cost_ngn: 0,
+      cost_to_end_user_ngn: 0,
+      downpayment_amount_ngn: 0,
+      items: [
+        {
+          product_id: productLock.locked ? keepProductId : '',
+          quantity: productLock.locked ? keepQty : 1,
+          serial_number: '',
+        },
+      ],
+    })
+    setDupPhone(emptyDup())
+    setDocuments([])
+    setDupNin(emptyDup())
+    setDupBvn(emptyDup())
+    setSiteGps(null)
+    setSitePhotoFile(null)
+    setSiteError(null)
+    setFormError(null)
+    setActiveDraftId(undefined)
+    setDraftSavedOpen(true)
+  }
+
   const onSubmit = async (values: SaleFormValues) => {
     setFormError(null)
     setSiteError(null)
@@ -867,6 +1028,8 @@ export function SaleForm({
         .flatMap((item) => (item.serial_number || '').split(/[\s,;]+/))
         .map((s) => s.trim())
         .filter(Boolean)
+
+      if (isBrowserOnline()) {
       const dupResult = await scanBeneficiaryDuplicatesAction({
         name: nc.name,
         phone: nc.phone || nc.guardian_phone,
@@ -881,11 +1044,18 @@ export function SaleForm({
             .filter(Boolean)
             .join(' | ') || undefined,
         serial: serials,
+      }).catch((error) => {
+        if (isLikelyNetworkError(error)) return { success: false as const, error: 'offline' }
+        throw error
       })
       if (!dupResult.success) {
+        if (isLikelyNetworkError(dupResult.error) || dupResult.error === 'offline') {
+          // Fall through to full-sale draft after remaining local validation.
+        } else {
         setFormError(dupResult.error)
         return
-      }
+        }
+      } else {
       const hardIdFields = dupResult.data.hard.filter((m) =>
         m.matched_fields?.some((f) => f === 'phone' || f === 'nin' || f === 'bvn' || f === 'serial')
       )
@@ -919,6 +1089,8 @@ export function SaleForm({
           )
           return
         }
+      }
+      }
       }
     }
 
@@ -999,28 +1171,30 @@ export function SaleForm({
       }
     }
 
-    // Upload site photo to Cloudflare R2 only when submitting the sale
-    const prepared = await createSitePhotoUploadUrlAction({
-      contentType: sitePhotoFile.type || 'image/jpeg',
-      fileName: sitePhotoFile.name || 'site.jpg',
-    })
-    if (!prepared.success) {
-      setSiteError(prepared.error)
+    if (!isBrowserOnline()) {
+      try {
+        await saveSaleAsDraft(values)
+        resetFormAfterQueue(values)
+      } catch {
+        setFormError('Could not save this sale on this device. Check browser storage and try again.')
+      }
       return
     }
 
-    const put = await fetch(prepared.data.uploadUrl, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': sitePhotoFile.type || 'image/jpeg',
-      },
-      body: sitePhotoFile,
-    })
-    if (!put.ok) {
-      setSiteError('Upload to Cloudflare R2 failed. Check bucket CORS and credentials.')
+    let sitePhotoUrl: string
+    let remoteDocuments
+    try {
+      sitePhotoUrl = await uploadSitePhotoFile(sitePhotoFile)
+      remoteDocuments = await uploadPendingDocuments(documents)
+    } catch (error) {
+      if (isLikelyNetworkError(error)) {
+        await saveSaleAsDraft(values)
+        resetFormAfterQueue(values)
+        return
+      }
+      setSiteError(error instanceof Error ? error.message : 'Could not upload site photo or KYC')
       return
     }
-    const sitePhotoUrl = prepared.data.publicUrl
 
     const costToEndUser = Number(values.cost_to_end_user_ngn) || 0
     const downpayment =
@@ -1097,12 +1271,24 @@ export function SaleForm({
         out_of_area_reason: siteGps.out_of_area_reason ?? null,
       },
       site_photo_url: sitePhotoUrl,
-      documents: documents.length ? documents : undefined,
+      documents: remoteDocuments.length ? remoteDocuments : undefined,
+    }).catch((error) => {
+      if (isLikelyNetworkError(error)) return { success: false as const, error: 'offline' }
+      throw error
     })
 
     if (!result.success) {
+      if (isLikelyNetworkError(result.error) || result.error === 'offline') {
+        await saveSaleAsDraft(values)
+        resetFormAfterQueue(values)
+        return
+      }
       setFormError(result.error)
       return
+    }
+
+    if (activeDraftId) {
+      await deleteSaleDraft(activeDraftId)
     }
 
     // Keep geo + product locks across successful saves
@@ -1191,6 +1377,7 @@ export function SaleForm({
   }
 
   return (
+    <>
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
       <Panel title="Customer & payment" description="Choose who is buying and how they will pay">
         <div className="space-y-5">
@@ -2092,13 +2279,21 @@ export function SaleForm({
       )}
 
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={isSubmitting || hasDuplicates}>
-          Create sale
+        <Button type="submit" disabled={isSubmitting || (isOnline && hasDuplicates)}>
+          {!isOnline ? 'Save draft offline' : activeDraftId ? 'Save and sync' : 'Create sale'}
         </Button>
         <Button type="button" variant="outline" onClick={() => router.push('/sales')}>
           Cancel
         </Button>
       </div>
     </form>
+    {draftSavedOpen && (
+      <OfflineDraftSavedModal
+        onClose={() => setDraftSavedOpen(false)}
+        draftsHref="/sales/drafts"
+        message="This sale was saved as a draft on this device, including customer details, KYC, site photo, and GPS. It will sync automatically when you reconnect, or tap Sync now in the header."
+      />
+    )}
+    </>
   )
 }

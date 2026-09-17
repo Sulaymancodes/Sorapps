@@ -9,21 +9,27 @@ export default function OfflinePage() {
       </div>
       <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight">You’re offline</h1>
       <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-        Sorapps needs an internet connection for live CRM data. Reconnect to continue, or reopen
-        pages you already visited.
+        Live CRM data needs a connection. Sales and customers you save without a network — including
+        KYC, site photos, and GPS — are stored as drafts and will sync when you reconnect.
       </p>
       <div className="mt-6 flex flex-wrap justify-center gap-3">
         <Link
-          href="/dashboard"
+          href="/sales/drafts"
           className="inline-flex h-9 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground"
         >
-          Try dashboard
+          Open drafts
         </Link>
         <Link
-          href="/login"
+          href="/sales/new"
           className="inline-flex h-9 items-center justify-center rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
         >
-          Go to login
+          Add sale
+        </Link>
+        <Link
+          href="/dashboard"
+          className="inline-flex h-9 items-center justify-center rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
+        >
+          Try dashboard
         </Link>
       </div>
     </main>

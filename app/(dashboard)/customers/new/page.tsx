@@ -12,7 +12,7 @@ export default function NewCustomerPage() {
     <PageShell>
       <PageHeader
         title="Add customer"
-        description="Create a new account in your customer directory"
+        description="Create a new account in your customer directory. If you are offline, it is saved as a draft on this device and synced when the network returns."
         actions={
           <Link href="/customers">
             <Button variant="outline" className="gap-2">

@@ -98,10 +98,16 @@ export function SiteVerificationPanel({
   const [r2Ready, setR2Ready] = useState<boolean | null>(null)
 
   useEffect(() => {
-    void getR2StatusAction().then((result) => {
-      if (result.success) setR2Ready(result.data.configured)
-      else setR2Ready(false)
-    })
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setR2Ready(null)
+      return
+    }
+    void getR2StatusAction()
+      .then((result) => {
+        if (result.success) setR2Ready(result.data.configured)
+        else setR2Ready(null)
+      })
+      .catch(() => setR2Ready(null))
   }, [])
 
   useEffect(() => {
@@ -213,7 +219,7 @@ export function SiteVerificationPanel({
   return (
     <Panel
       title="Site GPS & photo"
-      description="Photo stays on this form until you submit — then it uploads to Cloudflare R2"
+      description="Photo stays on this form until you submit — then it uploads. Offline, it is stored in the sale draft with GPS."
     >
       <div className="space-y-5">
         <div className="rounded-xl border border-border/70 bg-secondary/15 p-4">

@@ -25,10 +25,15 @@ import {
   CheckCheck,
   Loader2,
   PlusCircle,
+  CloudOff,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { GlobalSearch } from '@/components/layout/GlobalSearch'
+import { OfflineBanner } from '@/components/offline/OfflineBanner'
+import { OfflineSyncButton } from '@/components/offline/OfflineSyncButton'
+import { OfflineSyncNotice } from '@/components/offline/OfflineSyncNotice'
+import { OfflineSyncProvider } from '@/components/offline/offline-sync-context'
 import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import { authClient } from '@/lib/auth-client'
 import {
@@ -81,6 +86,7 @@ const allNavGroups = [
     label: 'Sales',
     items: [
       { name: 'Customers', href: '/customers', icon: Users },
+      { name: 'Drafts', href: '/sales/drafts', icon: CloudOff },
       { name: 'Sales', href: '/sales', icon: ShoppingCart },
     ],
   },
@@ -206,8 +212,11 @@ export function DashboardShell({
 
   const isActive = (href: string) => {
     if (href === '/sales') {
-      // Keep Sales list active for /sales and /sales/[id], but not /sales/new
-      return pathname === '/sales' || /^\/sales\/(?!new(?:\/|$))/.test(pathname)
+      return pathname === '/sales' || /^\/sales\/(?!new(?:\/|$)|drafts(?:\/|$))/.test(pathname)
+    }
+    if (href === '/customers') {
+      if (pathname.startsWith('/customers/drafts')) return false
+      return pathname === '/customers' || pathname.startsWith('/customers/')
     }
     return pathname === href || pathname.startsWith(`${href}/`)
   }
@@ -355,7 +364,8 @@ export function DashboardShell({
   )
 
   return (
-    <div className="relative flex min-h-dvh">
+    <OfflineSyncProvider>
+      <div className="relative flex min-h-dvh">
       {showNavLoading && (
         <div
           className="pointer-events-none fixed inset-x-0 top-0 z-[90] h-0.5 overflow-hidden bg-transparent"
@@ -443,6 +453,7 @@ export function DashboardShell({
           <GlobalSearch className="hidden md:block" />
 
           <div className="ml-auto flex items-center gap-2">
+            <OfflineSyncButton />
             {isAgent && (
               <Button
                 variant="ghost"
@@ -604,6 +615,8 @@ export function DashboardShell({
             </div>
           </div>
         </header>
+        <OfflineBanner />
+        <OfflineSyncNotice />
 
         <main
           className={cn(
@@ -665,6 +678,7 @@ export function DashboardShell({
           </ul>
         </nav>
       )}
-    </div>
+      </div>
+    </OfflineSyncProvider>
   )
 }

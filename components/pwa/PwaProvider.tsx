@@ -9,7 +9,7 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
       disable={process.env.NODE_ENV === 'development'}
       register
       cacheOnNavigation
-      reloadOnOnline
+      reloadOnOnline={false}
     >
       {children}
     </SerwistProvider>

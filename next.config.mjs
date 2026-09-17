@@ -12,7 +12,7 @@ const withSerwist = withSerwistInit({
   disable: process.env.NODE_ENV === 'development',
   register: false,
   cacheOnNavigation: true,
-  reloadOnOnline: true,
+  reloadOnOnline: false,
   additionalPrecacheEntries: [{ url: '/~offline', revision }],
   globPublicPatterns: ['icons/**/*.{png,svg}', 'icon.svg', 'apple-icon.png'],
 })

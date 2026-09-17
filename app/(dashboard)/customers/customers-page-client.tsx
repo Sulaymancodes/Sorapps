@@ -3,12 +3,13 @@
 import { useMemo, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Plus, Mail, Phone, Pencil, Trash2 } from 'lucide-react'
+import { CloudOff, Plus, Mail, Phone, Pencil, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
+import { useOfflineSyncOptional } from '@/components/offline/offline-sync-context'
 import { deleteCustomerAction } from '@/app/actions/customers'
 import { NIGERIAN_STATES } from '@/lib/constants/options'
 import { formatCurrency, formatPhone } from '@/lib/utils/formatting'
@@ -22,6 +23,8 @@ export function CustomersPageClient({
   canDelete?: boolean
 }) {
   const router = useRouter()
+  const offline = useOfflineSyncOptional()
+  const pendingCount = offline?.pendingCount ?? 0
   const [search, setSearch] = useState('')
   const [selectedState, setSelectedState] = useState('')
   const [selectedBusinessType, setSelectedBusinessType] = useState('')
@@ -107,14 +110,35 @@ export function CustomersPageClient({
             : `${filteredCustomers.length} accounts in your directory`
         }
         actions={
-          <Link href="/customers/new">
-            <Button className="gap-2">
-              <Plus className="size-4" />
-              Add Customer
-            </Button>
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/customers/drafts">
+              <Button variant="outline" className="gap-2">
+                <CloudOff className="size-4" />
+                Drafts
+                {pendingCount > 0 ? ` (${pendingCount})` : ''}
+              </Button>
+            </Link>
+            <Link href="/customers/new">
+              <Button className="gap-2">
+                <Plus className="size-4" />
+                Add Customer
+              </Button>
+            </Link>
+          </div>
         }
       />
+
+      {pendingCount > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100">
+          <p>
+            {pendingCount} customer {pendingCount === 1 ? 'draft' : 'drafts'} on this device waiting
+            to sync.
+          </p>
+          <Link href="/customers/drafts" className="font-medium underline-offset-2 hover:underline">
+            Review drafts
+          </Link>
+        </div>
+      )}
 
       {actionError && (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">

@@ -11,6 +11,7 @@ import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
 import { deleteSaleAction } from '@/app/actions/sales'
 import { SaleCreatedModal } from '@/components/sales/SaleCreatedModal'
+import { useOfflineSyncOptional } from '@/components/offline/offline-sync-context'
 import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import type {
   Customer,
@@ -56,6 +57,8 @@ export default function SalesPage({
   const searchParams = useSearchParams()
   const createdId = searchParams.get('created')
   const createdInvoice = searchParams.get('invoice')
+  const offline = useOfflineSyncOptional()
+  const saleDraftCount = offline?.saleDrafts.length ?? 0
   const [isPending, startTransition] = useTransition()
 
   const [search, setSearch] = useState('')
@@ -190,14 +193,34 @@ export default function SalesPage({
             : 'Every sale is either full payment or weekly installment'
         }
         actions={
-          <Link href="/sales/new">
-            <Button className="gap-2">
-              <Plus className="size-4" />
-              New Sale
-            </Button>
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/sales/drafts">
+              <Button variant="outline" className="gap-2">
+                Drafts
+                {saleDraftCount > 0 ? ` (${saleDraftCount})` : ''}
+              </Button>
+            </Link>
+            <Link href="/sales/new">
+              <Button className="gap-2">
+                <Plus className="size-4" />
+                New Sale
+              </Button>
+            </Link>
+          </div>
         }
       />
+
+      {saleDraftCount > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-100">
+          <p>
+            {saleDraftCount} sale {saleDraftCount === 1 ? 'draft' : 'drafts'} on this device waiting
+            to sync (KYC, site photo, and GPS included).
+          </p>
+          <Link href="/sales/drafts" className="font-medium underline-offset-2 hover:underline">
+            Review drafts
+          </Link>
+        </div>
+      )}
 
       {actionError && (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
