@@ -31,9 +31,16 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { GlobalSearch } from '@/components/layout/GlobalSearch'
 import { OfflineBanner } from '@/components/offline/OfflineBanner'
+import { OfflineRouteCache } from '@/components/offline/OfflineRouteCache'
 import { OfflineSyncButton } from '@/components/offline/OfflineSyncButton'
 import { OfflineSyncNotice } from '@/components/offline/OfflineSyncNotice'
 import { OfflineSyncProvider } from '@/components/offline/offline-sync-context'
+import {
+  clearCachedDashboardUser,
+  hardNavigate,
+  saveCachedDashboardUser,
+  shouldHardNavigate,
+} from '@/lib/offline/app-shell'
 import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import { authClient } from '@/lib/auth-client'
 import {
@@ -176,6 +183,10 @@ export function DashboardShell({
     setReadsReady(true)
   }, [])
 
+  useEffect(() => {
+    saveCachedDashboardUser(user)
+  }, [user])
+
   // Only show the loading UI if navigation is still pending after a short delay,
   // so fast loads don't flash a spinner.
   useEffect(() => {
@@ -234,6 +245,10 @@ export function DashboardShell({
   function navigateTo(href: string) {
     if (pathname === href) return
     setMobileOpen(false)
+    if (shouldHardNavigate()) {
+      hardNavigate(href)
+      return
+    }
     startNavTransition(() => {
       router.push(href)
     })
@@ -254,6 +269,7 @@ export function DashboardShell({
 
   async function handleSignOut() {
     setSigningOut(true)
+    clearCachedDashboardUser()
     await authClient.signOut()
     router.push('/login')
     router.refresh()
@@ -365,6 +381,7 @@ export function DashboardShell({
 
   return (
     <OfflineSyncProvider>
+      <OfflineRouteCache user={user} />
       <div className="relative flex min-h-dvh">
       {showNavLoading && (
         <div

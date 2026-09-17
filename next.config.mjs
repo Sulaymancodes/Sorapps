@@ -13,7 +13,10 @@ const withSerwist = withSerwistInit({
   register: false,
   cacheOnNavigation: true,
   reloadOnOnline: false,
-  additionalPrecacheEntries: [{ url: '/~offline', revision }],
+  additionalPrecacheEntries: [
+    { url: '/~offline', revision },
+    { url: '/login', revision },
+  ],
   globPublicPatterns: ['icons/**/*.{png,svg}', 'icon.svg', 'apple-icon.png'],
 })
 

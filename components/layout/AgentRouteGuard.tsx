@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import { hardNavigate, shouldHardNavigate } from '@/lib/offline/app-shell'
 import { isAgentAllowedPath } from '@/lib/roles'
 
 /** Client-side guard — agents only keep Sales, Customers, Activations, Calendar, Settings. */
@@ -18,6 +19,10 @@ export function AgentRouteGuard({
   useEffect(() => {
     if (!isAgent) return
     if (!isAgentAllowedPath(pathname)) {
+      if (shouldHardNavigate()) {
+        hardNavigate('/sales', true)
+        return
+      }
       router.replace('/sales')
     }
   }, [isAgent, pathname, router])

@@ -1,16 +1,8 @@
 import { Suspense } from 'react'
-import { redirect } from 'next/navigation'
 import { AuthShell } from '@/components/auth/AuthShell'
-import { getSession, getSessionAccess } from '@/lib/auth-server'
 import { LoginForm } from './login-form'
 
-export default async function LoginPage() {
-  const session = await getSession()
-  if (session) {
-    const access = getSessionAccess(session)
-    redirect(access.isAdmin ? '/dashboard' : '/sales')
-  }
-
+export default function LoginPage() {
   return (
     <AuthShell
       title="Sorapps"

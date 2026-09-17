@@ -3,6 +3,16 @@ import { redirect } from 'next/navigation'
 import { auth } from '@/lib/auth'
 import { isAdminRole, isAgentAllowedPath, isAgentRole, normalizeRole } from '@/lib/roles'
 
+export function isNextRedirect(error: unknown) {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'digest' in error &&
+    typeof (error as { digest: unknown }).digest === 'string' &&
+    (error as { digest: string }).digest.startsWith('NEXT_REDIRECT')
+  )
+}
+
 export async function getSession() {
   return auth.api.getSession({
     headers: await headers(),

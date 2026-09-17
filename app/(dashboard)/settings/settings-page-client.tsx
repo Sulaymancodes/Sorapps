@@ -20,6 +20,7 @@ import {
   updateUserTerritoryAction,
 } from '@/app/actions/users'
 import { authClient } from '@/lib/auth-client'
+import { clearCachedDashboardUser } from '@/lib/offline/app-shell'
 import type { AppRole } from '@/lib/roles'
 
 const THEME_KEY = 'sorapps-theme'
@@ -309,6 +310,7 @@ export function SettingsPageClient({
             variant="outline"
             className="mt-4 gap-2"
             onClick={async () => {
+              clearCachedDashboardUser()
               await authClient.signOut()
               router.push('/login')
               router.refresh()

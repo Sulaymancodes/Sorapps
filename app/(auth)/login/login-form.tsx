@@ -1,12 +1,31 @@
 'use client'
 
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { authClient } from '@/lib/auth-client'
+import {
+  findCachedAppPath,
+  hardNavigate,
+  homePathForUser,
+  isSameOriginAppPath,
+  loadCachedDashboardUser,
+  type CachedDashboardUser,
+} from '@/lib/offline/app-shell'
+import { isBrowserOnline } from '@/lib/offline/network'
+
+function destinationFor(user: CachedDashboardUser | null, next: string) {
+  if (next && isSameOriginAppPath(next)) return next
+  return homePathForUser(user)
+}
+
+async function openSavedWorkspace(user: CachedDashboardUser, next: string) {
+  const dest = await findCachedAppPath(destinationFor(user, next))
+  hardNavigate(dest || destinationFor(user, next), true)
+}
 
 export function LoginForm() {
   const router = useRouter()
@@ -18,11 +37,91 @@ export function LoginForm() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [restoring, setRestoring] = useState(true)
+  const [savedUser, setSavedUser] = useState<CachedDashboardUser | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function restore() {
+      const cached = loadCachedDashboardUser()
+      const online = isBrowserOnline()
+
+      if (online) {
+        try {
+          const { data } = await Promise.race([
+            authClient.getSession(),
+            new Promise<never>((_, reject) => {
+              window.setTimeout(() => reject(new Error('session-timeout')), 4000)
+            }),
+          ])
+          if (cancelled) return
+          if (data?.user) {
+            router.replace(
+              destinationFor(
+                {
+                  name: data.user.name,
+                  email: data.user.email,
+                  role: (data.user as { role?: string | null }).role,
+                },
+                next
+              )
+            )
+            return
+          }
+        } catch {
+          // Network or auth host is down — use the device session if we have one.
+        }
+      }
+
+      if (cancelled) return
+
+      if (cached && (!online || !isBrowserOnline())) {
+        setRestoring(true)
+        await openSavedWorkspace(cached, next)
+        return
+      }
+
+      setSavedUser(cached)
+      if (cached?.email && !email) setEmail(cached.email)
+      setRestoring(false)
+    }
+
+    void restore()
+    return () => {
+      cancelled = true
+    }
+    // Intentionally run once on mount for this login URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function continueSavedSession() {
+    const cached = savedUser || loadCachedDashboardUser()
+    if (!cached) return
+    setError(null)
+    setLoading(true)
+    await openSavedWorkspace(cached, next)
+  }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
     setError(null)
     setLoading(true)
+
+    const cached = loadCachedDashboardUser()
+    if (!isBrowserOnline()) {
+      if (cached && cached.email.toLowerCase() === email.trim().toLowerCase()) {
+        await openSavedWorkspace(cached, next)
+        return
+      }
+      setLoading(false)
+      setError(
+        cached
+          ? `This device is saved for ${cached.email}. Use that account, or sign in once while online to switch.`
+          : 'Sign in once while online so this device can open Sorapps without a connection.'
+      )
+      return
+    }
 
     const { error: signInError } = await authClient.signIn.email({
       email,
@@ -36,9 +135,17 @@ export function LoginForm() {
       return
     }
 
-    // Land on home — it routes admin → dashboard, agent → sales
     router.push(next || '/')
     router.refresh()
+  }
+
+  if (restoring) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-8 text-sm text-muted-foreground">
+        <Loader2 className="size-5 animate-spin text-primary" />
+        Opening your saved workspace…
+      </div>
+    )
   }
 
   return (
@@ -47,6 +154,23 @@ export function LoginForm() {
         <p className="rounded-lg border border-border bg-secondary/40 px-3 py-2 text-sm text-muted-foreground">
           Public registration is closed. Ask an admin to create your agent account.
         </p>
+      )}
+      {savedUser && (
+        <div className="rounded-lg border border-border bg-secondary/40 px-3 py-3">
+          <p className="text-sm text-muted-foreground">
+            This device already has a session for{' '}
+            <span className="font-medium text-foreground">{savedUser.name}</span>.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-3 h-10 w-full"
+            disabled={loading}
+            onClick={() => void continueSavedSession()}
+          >
+            Continue as {savedUser.name}
+          </Button>
+        </div>
       )}
       <div>
         <Label htmlFor="email">Email</Label>
