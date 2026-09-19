@@ -39,3 +39,9 @@ public/sw.js
 public/sw.js.map
 public/swe-worker*
 
+# Android TWA build output (project files live in android-agent/)
+android-agent/.gradle/
+android-agent/**/build/
+android-agent/local.properties
+android-agent/.idea/
+
