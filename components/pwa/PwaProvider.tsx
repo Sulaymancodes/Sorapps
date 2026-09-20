@@ -10,6 +10,7 @@ import {
   PUBLIC_OFFLINE_ROUTES,
   requestAppShellCache,
   shouldHardNavigate,
+  stayOnCachedOfflineShell,
 } from '@/lib/offline/app-shell'
 
 function OfflineNavigation() {
@@ -26,18 +27,26 @@ function OfflineNavigation() {
       if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download')) return
 
       const href = anchor.getAttribute('href')
-      if (!href || !isSameOriginAppPath(href)) return
+      if (!href) return
+      if (href.startsWith('#')) return
+      if (!isSameOriginAppPath(href)) return
 
       event.preventDefault()
       event.stopPropagation()
-      const dest = anchor.pathname + anchor.search + anchor.hash
       void (async () => {
-        if (anchor.pathname === '/~offline' || anchor.pathname.startsWith('/login')) {
-          hardNavigate(dest)
+        if (stayOnCachedOfflineShell(anchor.pathname, anchor.search, anchor.hash)) return
+        if (anchor.pathname.startsWith('/login')) {
+          hardNavigate(anchor.pathname + anchor.search + anchor.hash)
           return
         }
         const cached = await findCachedAppPath(anchor.pathname)
-        hardNavigate(cached || offlineFallbackPath(anchor.pathname))
+        if (cached && stayOnCachedOfflineShell(cached)) return
+        const fallback = offlineFallbackPath(anchor.pathname)
+        const fallbackUrl = new URL(fallback, window.location.origin)
+        if (stayOnCachedOfflineShell(fallbackUrl.pathname, fallbackUrl.search, fallbackUrl.hash)) {
+          return
+        }
+        hardNavigate(cached || fallback)
       })()
     }
 

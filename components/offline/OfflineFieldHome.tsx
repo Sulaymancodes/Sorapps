@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { CloudOff, PlusCircle, Users } from 'lucide-react'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
@@ -10,9 +9,9 @@ import { NewSalePageClient } from '@/app/(dashboard)/sales/new/new-sale-page-cli
 import { SaleDraftsPageClient } from '@/app/(dashboard)/sales/drafts/drafts-page-client'
 import { CustomerDraftsPageClient } from '@/app/(dashboard)/customers/drafts/drafts-page-client'
 import { useOfflineSyncOptional } from '@/components/offline/offline-sync-context'
-import type { CachedDashboardUser } from '@/lib/offline/app-shell'
+import type { CachedDashboardUser, OfflineFieldView } from '@/lib/offline/app-shell'
 
-export type OfflineFieldView = 'home' | 'sale' | 'customer' | 'drafts'
+export type { OfflineFieldView }
 
 export function OfflineFieldHome({
   view,
@@ -60,38 +59,29 @@ function OfflineFieldMenu({ user }: { user: CachedDashboardUser }) {
         description="This device is ready for field work without internet. New sales and customers are saved as drafts until you reconnect."
       />
       <div className="grid gap-3 sm:grid-cols-3">
-        <Link
-          href="/~offline?view=sale"
-          className="rounded-xl border border-border bg-card p-5 hover:bg-muted/40"
-        >
+        <a href="#sale" className="rounded-xl border border-border bg-card p-5 hover:bg-muted/40">
           <PlusCircle className="size-5 text-primary" />
           <p className="mt-3 font-medium">Add sale</p>
           <p className="mt-1 text-sm text-muted-foreground">Capture a sale, site photo, and GPS on this phone.</p>
-        </Link>
-        <Link
-          href="/~offline?view=customer"
-          className="rounded-xl border border-border bg-card p-5 hover:bg-muted/40"
-        >
+        </a>
+        <a href="#customer" className="rounded-xl border border-border bg-card p-5 hover:bg-muted/40">
           <Users className="size-5 text-primary" />
           <p className="mt-3 font-medium">Add customer</p>
           <p className="mt-1 text-sm text-muted-foreground">Create a customer record even when the network is down.</p>
-        </Link>
-        <Link
-          href="/~offline?view=drafts"
-          className="rounded-xl border border-border bg-card p-5 hover:bg-muted/40"
-        >
+        </a>
+        <a href="#drafts" className="rounded-xl border border-border bg-card p-5 hover:bg-muted/40">
           <CloudOff className="size-5 text-primary" />
           <p className="mt-3 font-medium">Drafts{pending > 0 ? ` (${pending})` : ''}</p>
           <p className="mt-1 text-sm text-muted-foreground">Review work saved on this device until it can sync.</p>
-        </Link>
+        </a>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Link href="/~offline?view=sale">
-          <Button>Add sale</Button>
-        </Link>
-        <Link href="/~offline?view=customer">
-          <Button variant="outline">Add customer</Button>
-        </Link>
+        <a href="#sale">
+          <Button type="button">Add sale</Button>
+        </a>
+        <a href="#customer">
+          <Button type="button" variant="outline">Add customer</Button>
+        </a>
       </div>
     </PageShell>
   )

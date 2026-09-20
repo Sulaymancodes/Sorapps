@@ -84,24 +84,34 @@ public class MainActivity extends Activity {
         }
 
         webView.setWebViewClient(new WebViewClient() {
+            private boolean recovering;
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
                 if (uri == null) return false;
                 String host = uri.getHost();
-                if (host != null && host.equalsIgnoreCase(BuildConfig.TWA_HOST)) {
-                    return false;
+                if (host == null || !host.equalsIgnoreCase(BuildConfig.TWA_HOST)) {
+                    startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                    return true;
                 }
-                startActivity(new Intent(Intent.ACTION_VIEW, uri));
-                return true;
+                if (!isOnline()) {
+                    return handleOfflineNavigation(view, uri);
+                }
+                return false;
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                recovering = false;
             }
 
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
-                if (request == null || !request.isForMainFrame()) return;
-                if (view.getSettings().getCacheMode() == WebSettings.LOAD_CACHE_ELSE_NETWORK) return;
+                if (request == null || !request.isForMainFrame() || recovering) return;
+                recovering = true;
                 applyCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);
-                view.loadUrl(BuildConfig.LAUNCH_URL);
+                view.loadUrl(cachedLaunchUrl(request.getUrl()));
             }
         });
 
@@ -169,6 +179,56 @@ public class MainActivity extends Activity {
         }
         String name = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
         return File.createTempFile("IMG_" + name, ".jpg", dir);
+    }
+
+    private boolean handleOfflineNavigation(WebView view, Uri uri) {
+        String path = uri.getPath() == null ? "/" : uri.getPath();
+        if ("/login".equals(path)) {
+            applyCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);
+            return false;
+        }
+
+        if (uri.getQueryParameter("view") != null) {
+            applyCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);
+            view.loadUrl(cachedLaunchUrl(uri));
+            return true;
+        }
+
+        String hash = offlineHash(uri);
+        String current = view.getUrl();
+        if (current != null && current.contains("/~offline")) {
+            view.evaluateJavascript("location.hash='" + hash.replace("'", "") + "'", null);
+            return true;
+        }
+
+        applyCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);
+        view.loadUrl(cachedLaunchUrl(uri));
+        return true;
+    }
+
+    private String cachedLaunchUrl(Uri failed) {
+        String hash = failed == null ? "" : offlineHash(failed);
+        String path = failed != null && failed.getPath() != null ? failed.getPath() : "";
+        String base = "/login".equals(path) && hash.isEmpty()
+                ? "https://" + BuildConfig.TWA_HOST + "/login"
+                : "https://" + BuildConfig.TWA_HOST + "/~offline";
+        if (hash.isEmpty()) return base;
+        return base + "#" + hash;
+    }
+
+    private String offlineHash(Uri uri) {
+        if (uri == null) return "";
+        if (isKnownView(uri.getFragment())) return uri.getFragment();
+        if (isKnownView(uri.getQueryParameter("view"))) return uri.getQueryParameter("view");
+        String path = uri.getPath() == null ? "" : uri.getPath();
+        if (path.startsWith("/sales/new")) return "sale";
+        if (path.startsWith("/customers/new")) return "customer";
+        if (path.contains("/drafts")) return "drafts";
+        return "";
+    }
+
+    private boolean isKnownView(String value) {
+        return "sale".equals(value) || "customer".equals(value) || "drafts".equals(value);
     }
 
     private int cacheMode() {

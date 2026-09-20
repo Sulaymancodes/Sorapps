@@ -1,31 +1,37 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
 import { Loader2, WifiOff } from 'lucide-react'
 import { DashboardOfflineShell } from '@/components/offline/DashboardOfflineShell'
-import {
-  OfflineFieldHome,
-  type OfflineFieldView,
-} from '@/components/offline/OfflineFieldHome'
+import { OfflineFieldHome } from '@/components/offline/OfflineFieldHome'
 import {
   findCachedAppPath,
   hardNavigate,
   homePathForUser,
   loadCachedDashboardUser,
+  offlineViewFromLocation,
+  type OfflineFieldView,
 } from '@/lib/offline/app-shell'
 import { isBrowserOnline } from '@/lib/offline/network'
 
-function parseView(value: string | null): OfflineFieldView {
-  if (value === 'sale' || value === 'customer' || value === 'drafts') return value
-  return 'home'
+function currentView(): OfflineFieldView {
+  if (typeof window === 'undefined') return 'home'
+  return offlineViewFromLocation(window.location.pathname, window.location.search, window.location.hash)
 }
 
-function OfflinePageInner() {
-  const searchParams = useSearchParams()
-  const view = parseView(searchParams.get('view'))
+export default function OfflinePage() {
   const [status, setStatus] = useState<'checking' | 'workspace' | 'signed-out'>('checking')
+  const [view, setView] = useState<OfflineFieldView>('home')
+
+  useEffect(() => {
+    function syncView() {
+      setView(currentView())
+    }
+    syncView()
+    window.addEventListener('hashchange', syncView)
+    return () => window.removeEventListener('hashchange', syncView)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -33,8 +39,9 @@ function OfflinePageInner() {
     async function restore() {
       const user = loadCachedDashboardUser()
       const online = isBrowserOnline()
+      const activeView = currentView()
 
-      if (online && view === 'home') {
+      if (online && activeView === 'home') {
         const dest = user
           ? (await findCachedAppPath(homePathForUser(user))) || homePathForUser(user)
           : '/login'
@@ -50,7 +57,7 @@ function OfflinePageInner() {
     return () => {
       cancelled = true
     }
-  }, [view])
+  }, [])
 
   if (status === 'checking') {
     return (
@@ -112,19 +119,5 @@ function OfflinePageInner() {
     <DashboardOfflineShell>
       <OfflineFieldHome view={view} user={user} />
     </DashboardOfflineShell>
-  )
-}
-
-export default function OfflinePage() {
-  return (
-    <Suspense
-      fallback={
-        <main className="flex min-h-dvh items-center justify-center bg-background text-sm text-muted-foreground">
-          Opening your saved workspace…
-        </main>
-      }
-    >
-      <OfflinePageInner />
-    </Suspense>
   )
 }

@@ -65,11 +65,39 @@ export function persistSessionUser(user: {
 }
 
 export function offlineFallbackPath(pathname: string) {
-  if (pathname.startsWith('/sales/new')) return '/~offline?view=sale'
-  if (pathname.startsWith('/customers/new')) return '/~offline?view=customer'
-  if (pathname.includes('/drafts')) return '/~offline?view=drafts'
+  if (pathname.startsWith('/sales/new')) return '/~offline#sale'
+  if (pathname.startsWith('/customers/new')) return '/~offline#customer'
+  if (pathname.includes('/drafts')) return '/~offline#drafts'
   if (pathname === '/~offline' || pathname.startsWith('/login')) return pathname
   return '/~offline'
+}
+
+export type OfflineFieldView = 'home' | 'sale' | 'customer' | 'drafts'
+
+export function offlineViewFromLocation(pathname: string, search = '', hash = ''): OfflineFieldView {
+  const fromHash = hash.replace(/^#/, '')
+  if (fromHash === 'sale' || fromHash === 'customer' || fromHash === 'drafts') return fromHash
+
+  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
+  const fromQuery = params.get('view')
+  if (fromQuery === 'sale' || fromQuery === 'customer' || fromQuery === 'drafts') return fromQuery
+
+  if (pathname.startsWith('/sales/new')) return 'sale'
+  if (pathname.startsWith('/customers/new')) return 'customer'
+  if (pathname.includes('/drafts')) return 'drafts'
+  return 'home'
+}
+
+export function stayOnCachedOfflineShell(pathname: string, search = '', hash = '') {
+  if (typeof window === 'undefined') return false
+  if (window.location.pathname !== '/~offline') return false
+
+  const view = offlineViewFromLocation(pathname, search, hash)
+  const next = view === 'home' ? '' : view
+  const current = window.location.hash.replace(/^#/, '')
+  if (current === next) return true
+  window.location.hash = next
+  return true
 }
 
 export async function findCachedAppPath(preferred?: string | null) {

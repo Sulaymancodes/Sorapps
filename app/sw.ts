@@ -3,6 +3,7 @@ import { defaultCache, PAGES_CACHE_NAME } from '@serwist/next/worker'
 import type { PrecacheEntry, SerwistGlobalConfig } from 'serwist'
 import {
   CacheableResponsePlugin,
+  CacheFirst,
   ExpirationPlugin,
   NetworkFirst,
   NetworkOnly,
@@ -101,6 +102,18 @@ const serwist = new Serwist({
     {
       matcher: ({ sameOrigin, url }) => sameOrigin && isApiPath(url.pathname),
       handler: new NetworkOnly(),
+    },
+    {
+      matcher: ({ request, sameOrigin, url }) =>
+        sameOrigin
+        && !isApiPath(url.pathname)
+        && isDocumentRequest(request)
+        && self.navigator.onLine === false,
+      handler: new CacheFirst({
+        cacheName: PAGES_CACHE_NAME.html,
+        matchOptions: { ignoreSearch: true },
+        plugins: pagePlugins,
+      }),
     },
     {
       matcher: ({ request, sameOrigin, url }) =>
