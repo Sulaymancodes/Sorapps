@@ -45,9 +45,36 @@ export function homePathForUser(user?: Pick<CachedDashboardUser, 'role'> | null)
   return isAgentRole(user?.role) ? '/sales' : '/dashboard'
 }
 
+export function persistSessionUser(user: {
+  name?: string | null
+  email?: string | null
+  role?: string | null
+  image?: string | null
+  assignedState?: string | null
+  assignedLga?: string | null
+}) {
+  if (!user.email || !user.name) return
+  saveCachedDashboardUser({
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    image: user.image,
+    assignedState: user.assignedState,
+    assignedLga: user.assignedLga,
+  })
+}
+
+export function offlineFallbackPath(pathname: string) {
+  if (pathname.startsWith('/sales/new')) return '/~offline?view=sale'
+  if (pathname.startsWith('/customers/new')) return '/~offline?view=customer'
+  if (pathname.includes('/drafts')) return '/~offline?view=drafts'
+  if (pathname === '/~offline' || pathname.startsWith('/login')) return pathname
+  return '/~offline'
+}
+
 export async function findCachedAppPath(preferred?: string | null) {
   if (typeof window === 'undefined' || typeof caches === 'undefined') {
-    return preferred || null
+    return null
   }
 
   const candidates = [
@@ -62,6 +89,7 @@ export async function findCachedAppPath(preferred?: string | null) {
     '/activations',
     '/settings',
     '/login',
+    '/~offline',
   ].filter((path): path is string => Boolean(path))
 
   for (const path of [...new Set(candidates)]) {
@@ -70,7 +98,7 @@ export async function findCachedAppPath(preferred?: string | null) {
     if (match?.ok) return path
   }
 
-  return preferred || null
+  return null
 }
 
 export function saveCachedDashboardUser(user: CachedDashboardUser) {

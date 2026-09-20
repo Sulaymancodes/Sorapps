@@ -38,6 +38,7 @@ const APP_NAV_FALLBACKS = [
   '/sales/drafts',
   '/dashboard',
   '/login',
+  '/~offline',
 ]
 
 async function cachedPage(path: string) {
@@ -64,8 +65,7 @@ const pagePlugins = [
     handlerDidError: async ({ request }: { request: Request }) => {
       if (!isDocumentRequest(request)) return undefined
       const pathname = new URL(request.url).pathname
-      if (pathname !== '/' && pathname !== '/dashboard' && pathname !== '/login') return undefined
-      for (const path of APP_NAV_FALLBACKS) {
+      for (const path of [...new Set([pathname, ...APP_NAV_FALLBACKS])]) {
         const hit = await cachedPage(path)
         if (hit) return hit
       }

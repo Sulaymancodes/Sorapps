@@ -32,11 +32,11 @@ export function DashboardOfflineShell({ children }: { children: React.ReactNode 
           <WifiOff className="size-8" />
         </div>
         <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight">
-          You’re offline
+          Sign in once while online
         </h1>
         <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-          Open Sorapps once while online so this device can save your session and pages for field
-          use without a connection.
+          After one successful sign-in, this phone keeps your session so you can add sales and
+          customers without internet.
         </p>
         <Link
           href="/login"

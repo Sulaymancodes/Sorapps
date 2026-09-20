@@ -21,6 +21,7 @@ export const AGENT_ALLOWED_PREFIXES = [
   '/activations',
   '/calendar',
   '/settings',
+  '/~offline',
 ] as const
 
 export function isAgentAllowedPath(pathname: string): boolean {

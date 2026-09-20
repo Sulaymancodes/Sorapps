@@ -1,7 +1,7 @@
 'use client'
 
 import { FormEvent, useEffect, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,6 +13,10 @@ import {
   homePathForUser,
   isSameOriginAppPath,
   loadCachedDashboardUser,
+  persistSessionUser,
+  requestAppShellCache,
+  offlineRoutesForUser,
+  PUBLIC_OFFLINE_ROUTES,
   type CachedDashboardUser,
 } from '@/lib/offline/app-shell'
 import { isBrowserOnline } from '@/lib/offline/network'
@@ -23,12 +27,12 @@ function destinationFor(user: CachedDashboardUser | null, next: string) {
 }
 
 async function openSavedWorkspace(user: CachedDashboardUser, next: string) {
+  persistSessionUser(user)
   const dest = await findCachedAppPath(destinationFor(user, next))
-  hardNavigate(dest || destinationFor(user, next), true)
+  hardNavigate(dest || '/~offline', true)
 }
 
 export function LoginForm() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const next = searchParams.get('next') || ''
   const notice = searchParams.get('notice')
@@ -47,6 +51,7 @@ export function LoginForm() {
       const cached = loadCachedDashboardUser()
       const online = isBrowserOnline()
 
+      let sessionFailed = false
       if (online) {
         try {
           const { data } = await Promise.race([
@@ -57,26 +62,30 @@ export function LoginForm() {
           ])
           if (cancelled) return
           if (data?.user) {
-            router.replace(
-              destinationFor(
-                {
-                  name: data.user.name,
-                  email: data.user.email,
-                  role: (data.user as { role?: string | null }).role,
-                },
-                next
-              )
-            )
+            const sessionUser = {
+              name: data.user.name,
+              email: data.user.email,
+              role: (data.user as { role?: string | null }).role,
+              image: data.user.image,
+              assignedState: (data.user as { assignedState?: string | null }).assignedState,
+              assignedLga: (data.user as { assignedLga?: string | null }).assignedLga,
+            }
+            persistSessionUser(sessionUser)
+            void requestAppShellCache([
+              ...offlineRoutesForUser(sessionUser),
+              ...PUBLIC_OFFLINE_ROUTES,
+            ])
+            hardNavigate(destinationFor(sessionUser, next), true)
             return
           }
         } catch {
-          // Network or auth host is down — use the device session if we have one.
+          sessionFailed = true
         }
       }
 
       if (cancelled) return
 
-      if (cached && (!online || !isBrowserOnline())) {
+      if (cached && (!online || sessionFailed || !isBrowserOnline())) {
         setRestoring(true)
         await openSavedWorkspace(cached, next)
         return
@@ -128,15 +137,29 @@ export function LoginForm() {
       password,
     })
 
-    setLoading(false)
-
     if (signInError) {
+      setLoading(false)
       setError(signInError.message || 'Invalid email or password')
       return
     }
 
-    router.push(next || '/')
-    router.refresh()
+    const { data } = await authClient.getSession()
+    const sessionUser = data?.user
+      ? {
+          name: data.user.name,
+          email: data.user.email,
+          role: (data.user as { role?: string | null }).role,
+          image: data.user.image,
+          assignedState: (data.user as { assignedState?: string | null }).assignedState,
+          assignedLga: (data.user as { assignedLga?: string | null }).assignedLga,
+        }
+      : null
+    if (sessionUser) persistSessionUser(sessionUser)
+    void requestAppShellCache([
+      ...offlineRoutesForUser(sessionUser),
+      ...PUBLIC_OFFLINE_ROUTES,
+    ])
+    hardNavigate(destinationFor(sessionUser, next), true)
   }
 
   if (restoring) {

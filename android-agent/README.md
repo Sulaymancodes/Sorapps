@@ -6,16 +6,16 @@ This is **not** a native rewrite. Chrome (or another TWA-capable browser) must b
 
 ## What it opens
 
-Default launch URL: `https://sorappscrm.vercel.app/login`
+Default launch URL: `https://sorappscrm.vercel.app/~offline`
+
+That page is precached, so the app can open with no internet. Online it forwards to sales or login.
 
 Change host or path in `gradle.properties`:
 
 ```
 twa.host=sorappscrm.vercel.app
-twa.launchPath=/login
+twa.launchPath=/~offline
 ```
-
-Use `/sales` instead of `/login` if you want signed-in agents to land on field work immediately.
 
 ## Build a sideload APK
 

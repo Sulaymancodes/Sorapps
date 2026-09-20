@@ -2,7 +2,15 @@
 
 import { useEffect } from 'react'
 import { SerwistProvider } from '@serwist/next/react'
-import { hardNavigate, isSameOriginAppPath, PUBLIC_OFFLINE_ROUTES, requestAppShellCache, shouldHardNavigate } from '@/lib/offline/app-shell'
+import {
+  findCachedAppPath,
+  hardNavigate,
+  isSameOriginAppPath,
+  offlineFallbackPath,
+  PUBLIC_OFFLINE_ROUTES,
+  requestAppShellCache,
+  shouldHardNavigate,
+} from '@/lib/offline/app-shell'
 
 function OfflineNavigation() {
   useEffect(() => {
@@ -22,7 +30,15 @@ function OfflineNavigation() {
 
       event.preventDefault()
       event.stopPropagation()
-      hardNavigate(anchor.pathname + anchor.search + anchor.hash)
+      const dest = anchor.pathname + anchor.search + anchor.hash
+      void (async () => {
+        if (anchor.pathname === '/~offline' || anchor.pathname.startsWith('/login')) {
+          hardNavigate(dest)
+          return
+        }
+        const cached = await findCachedAppPath(anchor.pathname)
+        hardNavigate(cached || offlineFallbackPath(anchor.pathname))
+      })()
     }
 
     document.addEventListener('click', onClick, true)

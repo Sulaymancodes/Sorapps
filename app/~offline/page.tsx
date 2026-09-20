@@ -1,39 +1,56 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { Loader2, WifiOff } from 'lucide-react'
+import { DashboardOfflineShell } from '@/components/offline/DashboardOfflineShell'
+import {
+  OfflineFieldHome,
+  type OfflineFieldView,
+} from '@/components/offline/OfflineFieldHome'
 import {
   findCachedAppPath,
   hardNavigate,
   homePathForUser,
   loadCachedDashboardUser,
 } from '@/lib/offline/app-shell'
+import { isBrowserOnline } from '@/lib/offline/network'
 
-export default function OfflinePage() {
-  const [status, setStatus] = useState<'checking' | 'ready'>('checking')
+function parseView(value: string | null): OfflineFieldView {
+  if (value === 'sale' || value === 'customer' || value === 'drafts') return value
+  return 'home'
+}
+
+function OfflinePageInner() {
+  const searchParams = useSearchParams()
+  const view = parseView(searchParams.get('view'))
+  const [status, setStatus] = useState<'checking' | 'workspace' | 'signed-out'>('checking')
 
   useEffect(() => {
     let cancelled = false
 
     async function restore() {
       const user = loadCachedDashboardUser()
-      if (user) {
-        const dest = await findCachedAppPath(homePathForUser(user))
-        if (cancelled) return
-        if (dest) {
-          hardNavigate(dest, true)
-          return
-        }
+      const online = isBrowserOnline()
+
+      if (online && view === 'home') {
+        const dest = user
+          ? (await findCachedAppPath(homePathForUser(user))) || homePathForUser(user)
+          : '/login'
+        if (!cancelled) hardNavigate(dest, true)
+        return
       }
-      if (!cancelled) setStatus('ready')
+
+      if (cancelled) return
+      setStatus(user ? 'workspace' : 'signed-out')
     }
 
     void restore()
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [view])
 
   if (status === 'checking') {
     return (
@@ -44,30 +61,70 @@ export default function OfflinePage() {
     )
   }
 
-  return (
-    <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 text-center">
-      <div className="flex size-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-        <WifiOff className="size-8" />
-      </div>
-      <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight">You’re offline</h1>
-      <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-        Sign in once while online so this device can save your session and pages. After that you
-        can open Sorapps and keep working without a connection.
-      </p>
-      <div className="mt-6 flex flex-wrap justify-center gap-3">
+  if (status === 'signed-out') {
+    return (
+      <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 text-center">
+        <div className="flex size-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <WifiOff className="size-8" />
+        </div>
+        <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight">
+          Sign in once while online
+        </h1>
+        <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+          After one successful sign-in, this phone keeps your session and field pages so you can add
+          sales and customers without internet.
+        </p>
         <Link
           href="/login"
-          className="inline-flex h-9 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground"
+          className="mt-6 inline-flex h-9 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground"
         >
           Open login
         </Link>
+      </main>
+    )
+  }
+
+  const user = loadCachedDashboardUser()
+  if (!user) {
+    return (
+      <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 text-center">
+        <div className="flex size-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <WifiOff className="size-8" />
+        </div>
+        <h1 className="mt-6 font-display text-2xl font-semibold tracking-tight">
+          Sign in once while online
+        </h1>
+        <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+          After one successful sign-in, this phone keeps your session and field pages so you can add
+          sales and customers without internet.
+        </p>
         <Link
-          href="/sales/new"
-          className="inline-flex h-9 items-center justify-center rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
+          href="/login"
+          className="mt-6 inline-flex h-9 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground"
         >
-          Add sale
+          Open login
         </Link>
-      </div>
-    </main>
+      </main>
+    )
+  }
+
+  return (
+    <DashboardOfflineShell>
+      <OfflineFieldHome view={view} user={user} />
+    </DashboardOfflineShell>
+  )
+}
+
+export default function OfflinePage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-dvh items-center justify-center bg-background text-sm text-muted-foreground">
+          Opening your saved workspace…
+        </main>
+      }
+    >
+      <OfflinePageInner />
+    </Suspense>
   )
 }
