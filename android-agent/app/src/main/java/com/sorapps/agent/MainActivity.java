@@ -96,6 +96,7 @@ public class MainActivity extends Activity {
                     return true;
                 }
                 if (!isOnline()) {
+                    if (isSameDocument(view, uri)) return false;
                     return handleOfflineNavigation(view, uri);
                 }
                 return false;
@@ -197,13 +198,29 @@ public class MainActivity extends Activity {
         String hash = offlineHash(uri);
         String current = view.getUrl();
         if (current != null && current.contains("/~offline")) {
-            view.evaluateJavascript("location.hash='" + hash.replace("'", "") + "'", null);
+            String detail = hash.isEmpty() ? "home" : hash;
+            view.evaluateJavascript(
+                    "(function(){"
+                            + "window.dispatchEvent(new CustomEvent('sorapps-offline-view',{detail:'" + detail + "'}));"
+                            + "})()",
+                    null);
             return true;
         }
 
         applyCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);
         view.loadUrl(cachedLaunchUrl(uri));
         return true;
+    }
+
+    private boolean isSameDocument(WebView view, Uri uri) {
+        String current = view.getUrl();
+        if (current == null || uri == null) return false;
+        Uri now = Uri.parse(current);
+        String currentPath = now.getPath() == null ? "/" : now.getPath();
+        String nextPath = uri.getPath() == null ? "/" : uri.getPath();
+        String currentHost = now.getHost() == null ? "" : now.getHost();
+        String nextHost = uri.getHost() == null ? "" : uri.getHost();
+        return currentPath.equals(nextPath) && currentHost.equalsIgnoreCase(nextHost);
     }
 
     private String cachedLaunchUrl(Uri failed) {

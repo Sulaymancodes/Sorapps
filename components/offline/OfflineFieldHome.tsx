@@ -9,9 +9,17 @@ import { NewSalePageClient } from '@/app/(dashboard)/sales/new/new-sale-page-cli
 import { SaleDraftsPageClient } from '@/app/(dashboard)/sales/drafts/drafts-page-client'
 import { CustomerDraftsPageClient } from '@/app/(dashboard)/customers/drafts/drafts-page-client'
 import { useOfflineSyncOptional } from '@/components/offline/offline-sync-context'
-import type { CachedDashboardUser, OfflineFieldView } from '@/lib/offline/app-shell'
+import { requestOfflineFieldView, type CachedDashboardUser, type OfflineFieldView } from '@/lib/offline/app-shell'
 
 export type { OfflineFieldView }
+
+function BackToFieldHome() {
+  return (
+    <Button type="button" variant="outline" className="gap-2" onClick={() => requestOfflineFieldView('home')}>
+      Back
+    </Button>
+  )
+}
 
 export function OfflineFieldHome({
   view,
@@ -21,7 +29,7 @@ export function OfflineFieldHome({
   user: CachedDashboardUser
 }) {
   if (view === 'sale') {
-    return <NewSalePageClient customers={[]} products={[]} forcedGeo={null} isAdmin={false} />
+    return <NewSalePageClient customers={[]} products={[]} forcedGeo={null} isAdmin={false} onBack={() => requestOfflineFieldView('home')} />
   }
 
   if (view === 'customer') {
@@ -30,6 +38,7 @@ export function OfflineFieldHome({
         <PageHeader
           title="Add customer"
           description="Saved on this device while you are offline, then synced when the network returns."
+          actions={<BackToFieldHome />}
         />
         <CustomerForm mode="create" />
       </PageShell>
@@ -39,6 +48,13 @@ export function OfflineFieldHome({
   if (view === 'drafts') {
     return (
       <div className="space-y-8">
+        <PageShell>
+          <PageHeader
+            title="Drafts"
+            description="Work saved on this device until it can sync."
+            actions={<BackToFieldHome />}
+          />
+        </PageShell>
         <SaleDraftsPageClient />
         <CustomerDraftsPageClient />
       </div>
@@ -59,29 +75,41 @@ function OfflineFieldMenu({ user }: { user: CachedDashboardUser }) {
         description="This device is ready for field work without internet. New sales and customers are saved as drafts until you reconnect."
       />
       <div className="grid gap-3 sm:grid-cols-3">
-        <a href="#sale" className="rounded-xl border border-border bg-card p-5 hover:bg-muted/40">
+        <button
+          type="button"
+          onClick={() => requestOfflineFieldView('sale')}
+          className="rounded-xl border border-border bg-card p-5 text-left hover:bg-muted/40"
+        >
           <PlusCircle className="size-5 text-primary" />
           <p className="mt-3 font-medium">Add sale</p>
           <p className="mt-1 text-sm text-muted-foreground">Capture a sale, site photo, and GPS on this phone.</p>
-        </a>
-        <a href="#customer" className="rounded-xl border border-border bg-card p-5 hover:bg-muted/40">
+        </button>
+        <button
+          type="button"
+          onClick={() => requestOfflineFieldView('customer')}
+          className="rounded-xl border border-border bg-card p-5 text-left hover:bg-muted/40"
+        >
           <Users className="size-5 text-primary" />
           <p className="mt-3 font-medium">Add customer</p>
           <p className="mt-1 text-sm text-muted-foreground">Create a customer record even when the network is down.</p>
-        </a>
-        <a href="#drafts" className="rounded-xl border border-border bg-card p-5 hover:bg-muted/40">
+        </button>
+        <button
+          type="button"
+          onClick={() => requestOfflineFieldView('drafts')}
+          className="rounded-xl border border-border bg-card p-5 text-left hover:bg-muted/40"
+        >
           <CloudOff className="size-5 text-primary" />
           <p className="mt-3 font-medium">Drafts{pending > 0 ? ` (${pending})` : ''}</p>
           <p className="mt-1 text-sm text-muted-foreground">Review work saved on this device until it can sync.</p>
-        </a>
+        </button>
       </div>
       <div className="flex flex-wrap gap-2">
-        <a href="#sale">
-          <Button type="button">Add sale</Button>
-        </a>
-        <a href="#customer">
-          <Button type="button" variant="outline">Add customer</Button>
-        </a>
+        <Button type="button" onClick={() => requestOfflineFieldView('sale')}>
+          Add sale
+        </Button>
+        <Button type="button" variant="outline" onClick={() => requestOfflineFieldView('customer')}>
+          Add customer
+        </Button>
       </div>
     </PageShell>
   )

@@ -10,6 +10,7 @@ import {
   hardNavigate,
   homePathForUser,
   loadCachedDashboardUser,
+  OFFLINE_VIEW_EVENT,
   offlineViewFromLocation,
   type OfflineFieldView,
 } from '@/lib/offline/app-shell'
@@ -28,9 +29,21 @@ export default function OfflinePage() {
     function syncView() {
       setView(currentView())
     }
+    function onRequestedView(event: Event) {
+      const next = (event as CustomEvent<OfflineFieldView>).detail
+      if (next === 'home' || next === 'sale' || next === 'customer' || next === 'drafts') {
+        setView(next)
+      }
+    }
     syncView()
     window.addEventListener('hashchange', syncView)
-    return () => window.removeEventListener('hashchange', syncView)
+    window.addEventListener('popstate', syncView)
+    window.addEventListener(OFFLINE_VIEW_EVENT, onRequestedView)
+    return () => {
+      window.removeEventListener('hashchange', syncView)
+      window.removeEventListener('popstate', syncView)
+      window.removeEventListener(OFFLINE_VIEW_EVENT, onRequestedView)
+    }
   }, [])
 
   useEffect(() => {

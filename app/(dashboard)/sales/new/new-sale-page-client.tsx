@@ -66,11 +66,13 @@ export function NewSalePageClient({
   products,
   forcedGeo,
   isAdmin,
+  onBack,
 }: {
   customers: Customer[]
   products: Product[]
   forcedGeo: ForcedGeo | null
   isAdmin: boolean
+  onBack?: () => void
 }) {
   const [catalog, setCatalog] = useState<CachedCatalog>({ customers, products, forcedGeo })
 
@@ -105,12 +107,19 @@ export function NewSalePageClient({
             : 'Create a sale — invoice and payment schedule are generated automatically'
         }
         actions={
-          <Link href="/sales">
-            <Button variant="outline" className="gap-2">
+          onBack ? (
+            <Button type="button" variant="outline" className="gap-2" onClick={onBack}>
               <ArrowLeft className="size-4" />
               Back
             </Button>
-          </Link>
+          ) : (
+            <Link href="/sales">
+              <Button variant="outline" className="gap-2">
+                <ArrowLeft className="size-4" />
+                Back
+              </Button>
+            </Link>
+          )
         }
       />
       {!hasStock ? (

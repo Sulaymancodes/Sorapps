@@ -88,16 +88,19 @@ export function offlineViewFromLocation(pathname: string, search = '', hash = ''
   return 'home'
 }
 
+export const OFFLINE_VIEW_EVENT = 'sorapps-offline-view'
+
+export function requestOfflineFieldView(view: OfflineFieldView) {
+  if (typeof window === 'undefined') return false
+  if (window.location.pathname !== '/~offline') return false
+  window.dispatchEvent(new CustomEvent<OfflineFieldView>(OFFLINE_VIEW_EVENT, { detail: view }))
+  return true
+}
+
 export function stayOnCachedOfflineShell(pathname: string, search = '', hash = '') {
   if (typeof window === 'undefined') return false
   if (window.location.pathname !== '/~offline') return false
-
-  const view = offlineViewFromLocation(pathname, search, hash)
-  const next = view === 'home' ? '' : view
-  const current = window.location.hash.replace(/^#/, '')
-  if (current === next) return true
-  window.location.hash = next
-  return true
+  return requestOfflineFieldView(offlineViewFromLocation(pathname, search, hash))
 }
 
 export async function findCachedAppPath(preferred?: string | null) {
