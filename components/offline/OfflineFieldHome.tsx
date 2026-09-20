@@ -9,27 +9,29 @@ import { NewSalePageClient } from '@/app/(dashboard)/sales/new/new-sale-page-cli
 import { SaleDraftsPageClient } from '@/app/(dashboard)/sales/drafts/drafts-page-client'
 import { CustomerDraftsPageClient } from '@/app/(dashboard)/customers/drafts/drafts-page-client'
 import { useOfflineSyncOptional } from '@/components/offline/offline-sync-context'
-import { requestOfflineFieldView, type CachedDashboardUser, type OfflineFieldView } from '@/lib/offline/app-shell'
+import type { CachedDashboardUser, OfflineFieldView } from '@/lib/offline/app-shell'
 
 export type { OfflineFieldView }
-
-function BackToFieldHome() {
-  return (
-    <Button type="button" variant="outline" className="gap-2" onClick={() => requestOfflineFieldView('home')}>
-      Back
-    </Button>
-  )
-}
 
 export function OfflineFieldHome({
   view,
   user,
+  onViewChange,
 }: {
   view: OfflineFieldView
   user: CachedDashboardUser
+  onViewChange: (view: OfflineFieldView) => void
 }) {
   if (view === 'sale') {
-    return <NewSalePageClient customers={[]} products={[]} forcedGeo={null} isAdmin={false} onBack={() => requestOfflineFieldView('home')} />
+    return (
+      <NewSalePageClient
+        customers={[]}
+        products={[]}
+        forcedGeo={null}
+        isAdmin={false}
+        onBack={() => onViewChange('home')}
+      />
+    )
   }
 
   if (view === 'customer') {
@@ -38,7 +40,11 @@ export function OfflineFieldHome({
         <PageHeader
           title="Add customer"
           description="Saved on this device while you are offline, then synced when the network returns."
-          actions={<BackToFieldHome />}
+          actions={
+            <Button type="button" variant="outline" onClick={() => onViewChange('home')}>
+              Back
+            </Button>
+          }
         />
         <CustomerForm mode="create" />
       </PageShell>
@@ -52,7 +58,11 @@ export function OfflineFieldHome({
           <PageHeader
             title="Drafts"
             description="Work saved on this device until it can sync."
-            actions={<BackToFieldHome />}
+            actions={
+              <Button type="button" variant="outline" onClick={() => onViewChange('home')}>
+                Back
+              </Button>
+            }
           />
         </PageShell>
         <SaleDraftsPageClient />
@@ -61,10 +71,16 @@ export function OfflineFieldHome({
     )
   }
 
-  return <OfflineFieldMenu user={user} />
+  return <OfflineFieldMenu user={user} onViewChange={onViewChange} />
 }
 
-function OfflineFieldMenu({ user }: { user: CachedDashboardUser }) {
+function OfflineFieldMenu({
+  user,
+  onViewChange,
+}: {
+  user: CachedDashboardUser
+  onViewChange: (view: OfflineFieldView) => void
+}) {
   const offline = useOfflineSyncOptional()
   const pending = offline?.pendingCount ?? 0
 
@@ -77,7 +93,7 @@ function OfflineFieldMenu({ user }: { user: CachedDashboardUser }) {
       <div className="grid gap-3 sm:grid-cols-3">
         <button
           type="button"
-          onClick={() => requestOfflineFieldView('sale')}
+          onClick={() => onViewChange('sale')}
           className="rounded-xl border border-border bg-card p-5 text-left hover:bg-muted/40"
         >
           <PlusCircle className="size-5 text-primary" />
@@ -86,7 +102,7 @@ function OfflineFieldMenu({ user }: { user: CachedDashboardUser }) {
         </button>
         <button
           type="button"
-          onClick={() => requestOfflineFieldView('customer')}
+          onClick={() => onViewChange('customer')}
           className="rounded-xl border border-border bg-card p-5 text-left hover:bg-muted/40"
         >
           <Users className="size-5 text-primary" />
@@ -95,7 +111,7 @@ function OfflineFieldMenu({ user }: { user: CachedDashboardUser }) {
         </button>
         <button
           type="button"
-          onClick={() => requestOfflineFieldView('drafts')}
+          onClick={() => onViewChange('drafts')}
           className="rounded-xl border border-border bg-card p-5 text-left hover:bg-muted/40"
         >
           <CloudOff className="size-5 text-primary" />
@@ -104,10 +120,10 @@ function OfflineFieldMenu({ user }: { user: CachedDashboardUser }) {
         </button>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button type="button" onClick={() => requestOfflineFieldView('sale')}>
+        <Button type="button" onClick={() => onViewChange('sale')}>
           Add sale
         </Button>
-        <Button type="button" variant="outline" onClick={() => requestOfflineFieldView('customer')}>
+        <Button type="button" variant="outline" onClick={() => onViewChange('customer')}>
           Add customer
         </Button>
       </div>

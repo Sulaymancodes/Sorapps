@@ -5,6 +5,7 @@ import { SerwistProvider } from '@serwist/next/react'
 import {
   findCachedAppPath,
   hardNavigate,
+  isOfflineFieldCaptureHref,
   isSameOriginAppPath,
   offlineFallbackPath,
   PUBLIC_OFFLINE_ROUTES,
@@ -17,7 +18,6 @@ function OfflineNavigation() {
   useEffect(() => {
     void requestAppShellCache(PUBLIC_OFFLINE_ROUTES)
     function onClick(event: MouseEvent) {
-      if (!shouldHardNavigate()) return
       if (event.defaultPrevented || event.button !== 0) return
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
 
@@ -28,11 +28,35 @@ function OfflineNavigation() {
 
       const href = anchor.getAttribute('href')
       if (!href) return
-      if (href.startsWith('#')) return
+
+      const onShell = window.location.pathname === '/~offline'
+      if (href.startsWith('#')) {
+        if (!onShell) return
+        event.preventDefault()
+        event.stopPropagation()
+        stayOnCachedOfflineShell('/~offline', '', href)
+        return
+      }
+
       if (!isSameOriginAppPath(href)) return
+
+      if (onShell && isOfflineFieldCaptureHref(anchor.pathname + anchor.search + anchor.hash)) {
+        event.preventDefault()
+        event.stopPropagation()
+        stayOnCachedOfflineShell(anchor.pathname, anchor.search, anchor.hash)
+        return
+      }
+
+      if (!shouldHardNavigate()) return
 
       event.preventDefault()
       event.stopPropagation()
+
+      if (onShell) {
+        stayOnCachedOfflineShell('/~offline')
+        return
+      }
+
       void (async () => {
         if (stayOnCachedOfflineShell(anchor.pathname, anchor.search, anchor.hash)) return
         if (anchor.pathname.startsWith('/login')) {

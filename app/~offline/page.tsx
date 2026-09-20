@@ -6,15 +6,11 @@ import { Loader2, WifiOff } from 'lucide-react'
 import { DashboardOfflineShell } from '@/components/offline/DashboardOfflineShell'
 import { OfflineFieldHome } from '@/components/offline/OfflineFieldHome'
 import {
-  findCachedAppPath,
-  hardNavigate,
-  homePathForUser,
   loadCachedDashboardUser,
   OFFLINE_VIEW_EVENT,
   offlineViewFromLocation,
   type OfflineFieldView,
 } from '@/lib/offline/app-shell'
-import { isBrowserOnline } from '@/lib/offline/network'
 
 function currentView(): OfflineFieldView {
   if (typeof window === 'undefined') return 'home'
@@ -26,50 +22,26 @@ export default function OfflinePage() {
   const [view, setView] = useState<OfflineFieldView>('home')
 
   useEffect(() => {
-    function syncView() {
-      setView(currentView())
-    }
+    window.__sorappsSetOfflineView = setView
     function onRequestedView(event: Event) {
       const next = (event as CustomEvent<OfflineFieldView>).detail
       if (next === 'home' || next === 'sale' || next === 'customer' || next === 'drafts') {
         setView(next)
       }
     }
-    syncView()
-    window.addEventListener('hashchange', syncView)
-    window.addEventListener('popstate', syncView)
+    setView(currentView())
     window.addEventListener(OFFLINE_VIEW_EVENT, onRequestedView)
     return () => {
-      window.removeEventListener('hashchange', syncView)
-      window.removeEventListener('popstate', syncView)
+      if (window.__sorappsSetOfflineView === setView) {
+        delete window.__sorappsSetOfflineView
+      }
       window.removeEventListener(OFFLINE_VIEW_EVENT, onRequestedView)
     }
   }, [])
 
   useEffect(() => {
-    let cancelled = false
-
-    async function restore() {
-      const user = loadCachedDashboardUser()
-      const online = isBrowserOnline()
-      const activeView = currentView()
-
-      if (online && activeView === 'home') {
-        const dest = user
-          ? (await findCachedAppPath(homePathForUser(user))) || homePathForUser(user)
-          : '/login'
-        if (!cancelled) hardNavigate(dest, true)
-        return
-      }
-
-      if (cancelled) return
-      setStatus(user ? 'workspace' : 'signed-out')
-    }
-
-    void restore()
-    return () => {
-      cancelled = true
-    }
+    const user = loadCachedDashboardUser()
+    setStatus(user ? 'workspace' : 'signed-out')
   }, [])
 
   if (status === 'checking') {
@@ -130,7 +102,7 @@ export default function OfflinePage() {
 
   return (
     <DashboardOfflineShell>
-      <OfflineFieldHome view={view} user={user} />
+      <OfflineFieldHome view={view} user={user} onViewChange={setView} />
     </DashboardOfflineShell>
   )
 }

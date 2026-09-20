@@ -88,11 +88,28 @@ export function offlineViewFromLocation(pathname: string, search = '', hash = ''
   return 'home'
 }
 
+export function isOfflineFieldCaptureHref(href: string) {
+  const path = href.split('#')[0].split('?')[0]
+  return (
+    path === '/~offline'
+    || path.startsWith('/sales/new')
+    || path.startsWith('/customers/new')
+    || path.includes('/drafts')
+  )
+}
+
 export const OFFLINE_VIEW_EVENT = 'sorapps-offline-view'
+
+declare global {
+  interface Window {
+    __sorappsSetOfflineView?: (view: OfflineFieldView) => void
+  }
+}
 
 export function requestOfflineFieldView(view: OfflineFieldView) {
   if (typeof window === 'undefined') return false
   if (window.location.pathname !== '/~offline') return false
+  window.__sorappsSetOfflineView?.(view)
   window.dispatchEvent(new CustomEvent<OfflineFieldView>(OFFLINE_VIEW_EVENT, { detail: view }))
   return true
 }

@@ -96,7 +96,10 @@ public class MainActivity extends Activity {
                     return true;
                 }
                 if (!isOnline()) {
-                    if (isSameDocument(view, uri)) return false;
+                    if (isOfflineShell(view) || isOfflineShellUrl(uri)) {
+                        injectOfflineView(view, uri);
+                        return true;
+                    }
                     return handleOfflineNavigation(view, uri);
                 }
                 return false;
@@ -112,6 +115,7 @@ public class MainActivity extends Activity {
                 if (request == null || !request.isForMainFrame() || recovering) return;
                 recovering = true;
                 applyCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);
+                if (isOfflineShell(view)) return;
                 view.loadUrl(cachedLaunchUrl(request.getUrl()));
             }
         });
@@ -189,21 +193,8 @@ public class MainActivity extends Activity {
             return false;
         }
 
-        if (uri.getQueryParameter("view") != null) {
-            applyCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);
-            view.loadUrl(cachedLaunchUrl(uri));
-            return true;
-        }
-
-        String hash = offlineHash(uri);
-        String current = view.getUrl();
-        if (current != null && current.contains("/~offline")) {
-            String detail = hash.isEmpty() ? "home" : hash;
-            view.evaluateJavascript(
-                    "(function(){"
-                            + "window.dispatchEvent(new CustomEvent('sorapps-offline-view',{detail:'" + detail + "'}));"
-                            + "})()",
-                    null);
+        if (isOfflineShell(view)) {
+            injectOfflineView(view, uri);
             return true;
         }
 
@@ -212,15 +203,30 @@ public class MainActivity extends Activity {
         return true;
     }
 
-    private boolean isSameDocument(WebView view, Uri uri) {
+    private void injectOfflineView(WebView view, Uri uri) {
+        String detail = offlineHash(uri);
+        if (detail.isEmpty()) detail = "home";
+        view.evaluateJavascript(
+                "(function(){"
+                        + "var v='" + detail + "';"
+                        + "if(window.__sorappsSetOfflineView){window.__sorappsSetOfflineView(v);}"
+                        + "window.dispatchEvent(new CustomEvent('sorapps-offline-view',{detail:v}));"
+                        + "})()",
+                null);
+    }
+
+    private boolean isOfflineShell(WebView view) {
         String current = view.getUrl();
-        if (current == null || uri == null) return false;
-        Uri now = Uri.parse(current);
-        String currentPath = now.getPath() == null ? "/" : now.getPath();
-        String nextPath = uri.getPath() == null ? "/" : uri.getPath();
-        String currentHost = now.getHost() == null ? "" : now.getHost();
-        String nextHost = uri.getHost() == null ? "" : uri.getHost();
-        return currentPath.equals(nextPath) && currentHost.equalsIgnoreCase(nextHost);
+        return current != null && current.contains("/~offline");
+    }
+
+    private boolean isOfflineShellUrl(Uri uri) {
+        if (uri == null || uri.getPath() == null) return false;
+        String path = uri.getPath();
+        return "/~offline".equals(path)
+                || path.startsWith("/sales/new")
+                || path.startsWith("/customers/new")
+                || path.contains("/drafts");
     }
 
     private String cachedLaunchUrl(Uri failed) {

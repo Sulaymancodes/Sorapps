@@ -38,6 +38,7 @@ import { OfflineSyncProvider } from '@/components/offline/offline-sync-context'
 import {
   clearCachedDashboardUser,
   hardNavigate,
+  isOfflineFieldCaptureHref,
   offlineViewFromLocation,
   requestOfflineFieldView,
   saveCachedDashboardUser,
@@ -247,6 +248,10 @@ export function DashboardShell({
   function navigateTo(href: string) {
     if (pathname === href) return
     setMobileOpen(false)
+    if (pathname === '/~offline' && isOfflineFieldCaptureHref(href)) {
+      requestOfflineFieldView(offlineViewFromLocation(href))
+      return
+    }
     if (shouldHardNavigate()) {
       if (requestOfflineFieldView(offlineViewFromLocation(href))) return
       hardNavigate(href)
