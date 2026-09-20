@@ -3,4 +3,7 @@
     <files-path
         name="twa_files"
         path="." />
+    <cache-path
+        name="capture"
+        path="capture/" />
 </paths>

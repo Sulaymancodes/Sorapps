@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     short_name: 'Sorapps',
     description:
       'Solar distribution CRM — customers, sales, inventory, PAYGO collections, and field operations.',
-    start_url: '/dashboard',
+    start_url: '/~offline',
     scope: '/',
     display: 'standalone',
     orientation: 'any',

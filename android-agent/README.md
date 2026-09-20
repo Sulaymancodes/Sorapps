@@ -2,7 +2,7 @@
 
 Sideloadable Android wrapper around the hosted agent app. It is a Trusted Web Activity: a real APK with no Chrome URL bar, using the existing login, offline drafts, camera, GPS, and barcode flow.
 
-This is **not** a native rewrite. Chrome (or another TWA-capable browser) must be installed on the phone.
+This is **not** a native rewrite. The APK hosts the existing web app in a WebView so field work can keep running after the first online sign-in, including with no network.
 
 ## What it opens
 

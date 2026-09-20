@@ -25,6 +25,8 @@ android {
         manifestPlaceholders["hostName"] = twaHost
         manifestPlaceholders["defaultUrl"] = twaDefaultUrl
         manifestPlaceholders["launchPath"] = twaLaunchPath
+        buildConfigField("String", "LAUNCH_URL", "\"$twaDefaultUrl\"")
+        buildConfigField("String", "TWA_HOST", "\"$twaHost\"")
         resValue(
             "string",
             "assetStatements",
@@ -62,7 +64,7 @@ android {
     }
 
     buildFeatures {
-        buildConfig = false
+        buildConfig = true
     }
 
     applicationVariants.configureEach {
@@ -74,6 +76,6 @@ android {
 }
 
 dependencies {
-    implementation("com.google.androidbrowserhelper:androidbrowserhelper:2.7.3")
-    implementation("com.google.androidbrowserhelper:locationdelegation:1.1.2")
+    implementation("androidx.core:core:1.16.0")
+    implementation("androidx.webkit:webkit:1.14.0")
 }
