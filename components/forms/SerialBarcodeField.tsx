@@ -25,6 +25,7 @@ export function SerialBarcodeField({
   onChange,
   placeholder = 'Device serial…',
   className,
+  inputClassName,
 }: {
   id: string
   label?: string
@@ -32,6 +33,7 @@ export function SerialBarcodeField({
   onChange: (next: string) => void
   placeholder?: string
   className?: string
+  inputClassName?: string
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -155,6 +157,8 @@ export function SerialBarcodeField({
         value={value}
         placeholder={placeholder}
         autoComplete="off"
+        autoCapitalize="characters"
+        className={inputClassName}
         onChange={(e) => onChange(e.target.value)}
       />
       {scanning && (

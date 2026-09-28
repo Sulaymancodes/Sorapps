@@ -5,6 +5,7 @@ import { FileSpreadsheet, FileText, KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { SerialBarcodeField } from '@/components/forms/SerialBarcodeField'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
@@ -193,18 +194,13 @@ export function UnlockPageClient({
       <div className="grid gap-6 xl:grid-cols-[minmax(0,420px)_1fr]">
         <Panel title="Unlock a unit" description="No customer form. Serial in, PIN out.">
           <div className="space-y-4">
-            <div>
-              <Label htmlFor="serial">Serial number</Label>
-              <Input
-                id="serial"
-                value={serial}
-                onChange={(event) => setSerial(event.target.value)}
-                placeholder="e.g. 01-61-00000001"
-                autoCapitalize="characters"
-                autoComplete="off"
-                className="mt-1.5 font-mono"
-              />
-            </div>
+            <SerialBarcodeField
+              id="serial"
+              value={serial}
+              onChange={setSerial}
+              placeholder="e.g. 01-61-00000001"
+              inputClassName="font-mono"
+            />
 
             <div>
               <p className="mb-2 text-sm font-medium">Partial period</p>
