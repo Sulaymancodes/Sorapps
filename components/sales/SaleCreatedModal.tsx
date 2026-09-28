@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { CheckCircle2, X } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -10,34 +11,64 @@ import { cn } from '@/lib/utils'
 export function SaleCreatedModal({
   saleId,
   invoiceId,
+  unlockPin,
+  activationWarning,
 }: {
   saleId: string
   invoiceId?: string | null
+  unlockPin?: string | null
+  activationWarning?: string | null
 }) {
   const router = useRouter()
   const [open, setOpen] = useState(true)
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
+    setMounted(true)
     setOpen(true)
   }, [saleId])
+
+  useEffect(() => {
+    if (!open) return
+
+    const main = document.querySelector('main')
+    const previous = {
+      html: document.documentElement.style.overflow,
+      body: document.body.style.overflow,
+      main: main instanceof HTMLElement ? main.style.overflow : '',
+    }
+
+    window.scrollTo({ top: 0, left: 0 })
+    main?.scrollTo({ top: 0, left: 0 })
+
+    document.documentElement.style.overflow = 'hidden'
+    document.body.style.overflow = 'hidden'
+    if (main instanceof HTMLElement) main.style.overflow = 'hidden'
+
+    return () => {
+      document.documentElement.style.overflow = previous.html
+      document.body.style.overflow = previous.body
+      if (main instanceof HTMLElement) main.style.overflow = previous.main
+    }
+  }, [open, saleId])
 
   function dismiss() {
     setOpen(false)
     router.replace('/sales')
   }
 
-  if (!open) return null
+  if (!open || !mounted) return null
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[80] flex h-[100dvh] w-full items-center justify-center overflow-y-auto overscroll-none bg-black/55 p-4 pb-[max(1rem,calc(env(safe-area-inset-bottom)+4.5rem))] pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur-[2px] md:pb-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="sale-created-title"
       onClick={dismiss}
     >
       <div
-        className="w-full max-w-md rounded-2xl border border-border/80 bg-card p-6 shadow-2xl"
+        className="my-auto w-full max-w-md rounded-2xl border border-border/80 bg-card p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
@@ -69,6 +100,26 @@ export function SaleCreatedModal({
           Inventory was updated automatically
           {invoiceId ? ', and the invoice is ready.' : '.'}
         </p>
+        {unlockPin ? (
+          <div className="mt-4 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3">
+            <p className="text-sm font-medium text-foreground">Your unlock PIN is</p>
+            <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.2em] text-primary">
+              {unlockPin}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Saved on this sale. The customer should also get it by SMS.
+            </p>
+          </div>
+        ) : null}
+        {activationWarning ? (
+          <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+            Device PIN SMS was not sent: {activationWarning}
+          </p>
+        ) : !unlockPin ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            If the serial was captured, the customer should receive a device PIN by SMS.
+          </p>
+        ) : null}
 
         <div className="mt-6 flex flex-wrap gap-2">
           <Button onClick={dismiss}>Continue</Button>
@@ -88,6 +139,7 @@ export function SaleCreatedModal({
           </Link>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

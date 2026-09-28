@@ -117,15 +117,17 @@ export function buildActivationSmsBody(params: {
   validityDays?: number
   amountPaid?: number
   isPartial?: boolean
+  forever?: boolean
 }) {
   const serialLine = params.deviceSerial ? ` Device: ${params.deviceSerial}.` : ''
-  const validityLine =
-    typeof params.validityDays === 'number'
+  const validityLine = params.forever
+    ? ' Permanent unlock.'
+    : typeof params.validityDays === 'number'
       ? ` Valid for ${params.validityDays} day${params.validityDays === 1 ? '' : 's'}.`
       : ''
   const partialLine = params.isPartial ? ' Partial payment applied.' : ''
 
-  return `Sorapps: Hello ${params.customerName}, your activation code is ${params.code}.${serialLine}${validityLine}${partialLine} Keep this code safe.`
+  return `Sorapps: Hello ${params.customerName}, your device PIN is ${params.code}.${serialLine}${validityLine}${partialLine} Keep this PIN safe.`
 }
 
 export function buildPaygoReminderSmsBody(params: {

@@ -562,9 +562,9 @@ export function PaymentsPageClient({
                   onChange={(e) => setIssueActivation(e.target.checked)}
                 />
                 <span>
-                  Issue activation SMS
+                  Send device PIN by SMS
                   <span className="mt-0.5 block text-xs text-muted-foreground">
-                    Validity from amount paid
+                    BeeBeeJump PIN from the serial. Full payment is permanent; installments follow the paid period.
                   </span>
                 </span>
               </label>

@@ -19,6 +19,7 @@ export const AGENT_ALLOWED_PREFIXES = [
   '/sales',
   '/customers',
   '/activations',
+  '/unlock',
   '/calendar',
   '/settings',
   '/~offline',

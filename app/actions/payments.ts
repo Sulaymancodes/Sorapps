@@ -179,6 +179,7 @@ export async function recordPaymentAction(
     revalidatePath('/payments')
     revalidatePath('/sales')
     revalidatePath('/activations')
+    revalidatePath('/unlock')
     revalidatePath('/dashboard')
     revalidatePath('/calendar')
     revalidatePath('/customers')

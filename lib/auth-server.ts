@@ -13,10 +13,24 @@ export function isNextRedirect(error: unknown) {
   )
 }
 
+function isDatabaseTimeout(error: unknown) {
+  const cause = error && typeof error === 'object' && 'cause' in error ? (error as { cause?: unknown }).cause : error
+  const code = cause && typeof cause === 'object' && 'code' in cause ? String((cause as { code?: string }).code) : ''
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return code === 'ETIMEDOUT' || /etimedout|failed query|failed to get session/i.test(message)
+}
+
 export async function getSession() {
-  return auth.api.getSession({
-    headers: await headers(),
-  })
+  try {
+    return await auth.api.getSession({
+      headers: await headers(),
+    })
+  } catch (error) {
+    if (isDatabaseTimeout(error)) {
+      throw new Error('Database timed out. Check your internet and try again.')
+    }
+    throw error
+  }
 }
 
 export async function requireSession() {

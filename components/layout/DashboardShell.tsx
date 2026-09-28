@@ -24,6 +24,7 @@ import {
   MessageSquare,
   CheckCheck,
   Loader2,
+  KeyRound,
   PlusCircle,
   CloudOff,
 } from 'lucide-react'
@@ -113,6 +114,7 @@ const allNavGroups = [
       { name: 'Products', href: '/products', icon: Package },
       { name: 'Inventory', href: '/inventory', icon: Boxes },
       { name: 'Warranty', href: '/warranty', icon: Shield },
+      { name: 'Unlock', href: '/unlock', icon: KeyRound },
       { name: 'Activations', href: '/activations', icon: MessageSquare },
     ],
   },
@@ -124,6 +126,7 @@ const agentNavGroups = [
     items: [
       { name: 'Add sale', href: '/sales/new', icon: PlusCircle },
       { name: 'Sales', href: '/sales', icon: ShoppingCart },
+      { name: 'Unlock', href: '/unlock', icon: KeyRound },
       { name: 'Activations', href: '/activations', icon: MessageSquare },
       { name: 'Calendar', href: '/calendar', icon: Calendar },
     ],
@@ -667,7 +670,7 @@ export function DashboardShell({
           className="fixed inset-x-0 bottom-0 z-40 border-t border-border/80 bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden"
           aria-label="Agent navigation"
         >
-          <ul className="grid grid-cols-4">
+          <ul className="grid grid-cols-5">
             {agentMobileTabs.map((tab) => {
               const Icon = tab.icon
               const active = isActive(tab.href)

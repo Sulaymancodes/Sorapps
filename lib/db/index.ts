@@ -11,6 +11,8 @@ if (!connectionString) {
 const client = postgres(connectionString, {
   prepare: false, // required for Neon connection pooling
   max: 10,
+  idle_timeout: 20,
+  connect_timeout: 15,
 })
 
 export const db = drizzle(client, { schema })

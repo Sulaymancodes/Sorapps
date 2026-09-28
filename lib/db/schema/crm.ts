@@ -119,6 +119,7 @@ export const sales = pgTable(
     gpsLocked: boolean('gps_locked').notNull().default(false),
     gpsOutOfArea: boolean('gps_out_of_area').notNull().default(false),
     sitePhotoUrl: text('site_photo_url').notNull().default(''),
+    unlockPin: text('unlock_pin').notNull().default(''),
     createdByUserId: text('created_by_user_id'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
@@ -370,6 +371,28 @@ export const activationCodes = pgTable(
   ]
 )
 
+export const deviceUnlocks = pgTable(
+  'device_unlocks',
+  {
+    id: text('id').primaryKey(),
+    serialNumber: text('serial_number').notNull(),
+    kind: text('kind').notNull(),
+    dayToken: text('day_token').notNull(),
+    pin: text('pin').notNull(),
+    saleId: text('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+    warrantyId: text('warranty_id').references(() => warranties.id, {
+      onDelete: 'set null',
+    }),
+    createdByUserId: text('created_by_user_id').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('device_unlocks_serial_idx').on(table.serialNumber),
+    index('device_unlocks_created_by_idx').on(table.createdByUserId),
+    index('device_unlocks_created_at_idx').on(table.createdAt),
+  ]
+)
+
 /** Physical KYC / sales form uploads (JPG, PNG, PDF) */
 export const customerDocuments = pgTable(
   'customer_documents',
@@ -552,6 +575,17 @@ export const activationCodesRelations = relations(activationCodes, ({ one }) => 
   }),
   warranty: one(warranties, {
     fields: [activationCodes.warrantyId],
+    references: [warranties.id],
+  }),
+}))
+
+export const deviceUnlocksRelations = relations(deviceUnlocks, ({ one }) => ({
+  sale: one(sales, {
+    fields: [deviceUnlocks.saleId],
+    references: [sales.id],
+  }),
+  warranty: one(warranties, {
+    fields: [deviceUnlocks.warrantyId],
     references: [warranties.id],
   }),
 }))

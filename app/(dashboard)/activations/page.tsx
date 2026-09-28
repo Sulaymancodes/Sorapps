@@ -3,6 +3,7 @@ import { listCustomers } from '@/lib/services/customers'
 import { listSales, listPaymentSchedules } from '@/lib/services/sales'
 import { listWarranties } from '@/lib/services/warranties'
 import { listActivations } from '@/lib/services/activations'
+import { isBeebeeJumpConfigured } from '@/lib/services/beebeejump'
 import { getPaygoBaseValidityDays } from '@/lib/paygo/validity'
 import { matchesAgentTerritory } from '@/lib/utils/territory'
 import { ActivationsPageClient } from './activations-page-client'
@@ -15,6 +16,7 @@ function EmptyActivations() {
       devices={[]}
       activations={[]}
       smsConfigured={false}
+      beebeeConfigured={false}
       baseValidityDays={getPaygoBaseValidityDays()}
     />
   )
@@ -87,6 +89,7 @@ export default async function ActivationsPage() {
           created_at: a.created_at.toISOString(),
         }))}
         smsConfigured={Boolean(process.env.BULK_SMS_TOKEN)}
+        beebeeConfigured={isBeebeeJumpConfigured()}
         baseValidityDays={getPaygoBaseValidityDays()}
       />
     )

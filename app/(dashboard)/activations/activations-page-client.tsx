@@ -93,6 +93,7 @@ export function ActivationsPageClient({
   devices,
   activations,
   smsConfigured,
+  beebeeConfigured,
   baseValidityDays,
 }: {
   customers: CustomerOption[]
@@ -100,6 +101,7 @@ export function ActivationsPageClient({
   devices: DeviceOption[]
   activations: ActivationRow[]
   smsConfigured: boolean
+  beebeeConfigured: boolean
   baseValidityDays: number
 }) {
   const router = useRouter()
@@ -256,7 +258,7 @@ export function ActivationsPageClient({
       }
 
       setSuccess(
-        `Activation code sent to ${result.data.phone} · ${result.data.validity_days} days${
+        `Device PIN sent to ${result.data.phone} · ${result.data.validity_days} days${
           result.data.is_partial ? ' (partial)' : ''
         } · expires ${formatDate(new Date(result.data.expires_at))}.`
       )
@@ -275,7 +277,7 @@ export function ActivationsPageClient({
         setError(result.error)
         return
       }
-      setSuccess(`New activation code resent to ${result.data.phone}.`)
+      setSuccess(`New device PIN sent to ${result.data.phone}.`)
       router.refresh()
     })
   }
@@ -284,13 +286,19 @@ export function ActivationsPageClient({
     <PageShell>
       <PageHeader
         title="Device Activations"
-        description="PAYGO amount → validity days, then SMS activation codes via BulkSMS Nigeria"
+        description="BeeBeeJump issues the device PIN from the serial and payment period, then SMS sends it to the customer"
       />
 
       {!smsConfigured && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           BULK_SMS_TOKEN is not set. Add it in .env.local / Vercel env vars before sending live
           SMS.
+        </div>
+      )}
+      {!beebeeConfigured && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+          BeeBeeJump is not configured. Set BEEBEEJUMP_API_URL, BEEBEEJUMP_API_KEY, and
+          BEEBEEJUMP_API_SECRET before requesting a device PIN.
         </div>
       )}
 
@@ -306,7 +314,7 @@ export function ActivationsPageClient({
       )}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[380px_1fr]">
-        <Panel title="Send activation SMS" description="Validity scales with amount paid vs stipulated installment">
+        <Panel title="Send device PIN" description="Full payment unlocks permanently. Installments map to 7, 30, 60, 90, 180, or 360 days.">
           <div className="space-y-4">
             <div>
               <Label htmlFor="customer">Customer / beneficiary</Label>
@@ -559,7 +567,7 @@ export function ActivationsPageClient({
                 <MessageSquare className="mx-auto mb-3 size-10 text-muted-foreground" />
                 <p className="font-medium">No activation SMS yet</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Send your first activation code from the form
+                  Send the first device PIN from the form
                 </p>
               </div>
             )}

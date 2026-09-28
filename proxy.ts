@@ -29,6 +29,7 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/inventory') ||
     pathname.startsWith('/warranty') ||
     pathname.startsWith('/activations') ||
+    pathname.startsWith('/unlock') ||
     pathname.startsWith('/reports') ||
     pathname.startsWith('/calendar') ||
     pathname.startsWith('/settings')
@@ -61,6 +62,7 @@ export const config = {
     '/inventory/:path*',
     '/warranty/:path*',
     '/activations/:path*',
+    '/unlock/:path*',
     '/reports/:path*',
     '/calendar/:path*',
     '/settings/:path*',

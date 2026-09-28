@@ -5,7 +5,8 @@ import { z } from 'zod'
 import { getSessionAccess, requireAdmin, requireSession } from '@/lib/auth-server'
 import { createCustomerDocuments } from '@/lib/services/documents'
 import { getCustomer } from '@/lib/services/customers'
-import { createSale, deleteSale } from '@/lib/services/sales'
+import { issueActivationForSale } from '@/lib/services/activations'
+import { createSale, deleteSale, getSaleUnlockPin } from '@/lib/services/sales'
 import { assertAgentTerritory } from '@/lib/utils/territory'
 import type { DocumentUploadInput, Invoice, PaymentSchedule, Sale } from '@/lib/types/crm'
 
@@ -132,7 +133,16 @@ export type ActionResult<T = void> =
 
 export async function createSaleAction(
   input: z.infer<typeof saleSchema>
-): Promise<ActionResult<{ sale: Sale; invoice: Invoice; schedule: PaymentSchedule }>> {
+): Promise<
+  ActionResult<{
+    sale: Sale
+    invoice: Invoice
+    schedule: PaymentSchedule
+    activation_id?: string
+    activation_warning?: string
+    unlock_pin?: string
+  }>
+> {
   const session = await requireSession()
   const parsed = saleSchema.safeParse(input)
   if (!parsed.success) {
@@ -176,6 +186,35 @@ export async function createSaleAction(
       })
     }
 
+    let activationId: string | undefined
+    let activationWarning: string | undefined
+    let unlockPin: string | undefined
+    const paidAtSale = result.sale.amount_paid
+    if (paidAtSale > 0) {
+      try {
+        const firstInstallment = result.schedule.installments[0]
+        const { activation } = await issueActivationForSale({
+          sale_id: result.sale.id,
+          customer_id: result.sale.customer_id,
+          amount_paid: paidAtSale,
+          expected_amount:
+            result.sale.payment_type === 'full'
+              ? result.sale.total_amount
+              : firstInstallment?.amount || result.sale.total_amount,
+          payment_type: result.sale.payment_type,
+          created_by_user_id: session.user.id,
+        })
+        activationId = activation.id
+        unlockPin = activation.code
+      } catch (error) {
+        activationWarning =
+          error instanceof Error
+            ? error.message
+            : 'Sale saved, but the device PIN SMS could not be sent'
+        unlockPin = (await getSaleUnlockPin(result.sale.id)) || undefined
+      }
+    }
+
     revalidatePath('/sales')
     revalidatePath('/customers')
     revalidatePath('/products')
@@ -184,7 +223,17 @@ export async function createSaleAction(
     revalidatePath('/payments')
     revalidatePath('/dashboard')
     revalidatePath('/warranty')
-    return { success: true, data: result }
+    revalidatePath('/activations')
+    revalidatePath('/unlock')
+    return {
+      success: true,
+      data: {
+        ...result,
+        activation_id: activationId,
+        activation_warning: activationWarning,
+        unlock_pin: unlockPin,
+      },
+    }
   } catch (error) {
     return {
       success: false,

@@ -54,6 +54,7 @@ export async function sendActivationSmsAction(
     })
     revalidatePath('/activations')
     revalidatePath('/sales')
+    revalidatePath('/unlock')
     revalidatePath('/warranty')
     revalidatePath('/dashboard')
     return { success: true, data: activation }
@@ -74,6 +75,7 @@ export async function resendActivationSmsAction(
   try {
     const { activation } = await resendActivationSms(id)
     revalidatePath('/activations')
+    revalidatePath('/unlock')
     return { success: true, data: activation }
   } catch (error) {
     return {

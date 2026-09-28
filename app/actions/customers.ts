@@ -232,8 +232,8 @@ export async function scanBeneficiaryDuplicatesAction(input: {
   serial?: string | string[]
   exclude_id?: string
 }): Promise<ActionResult<DuplicateScanResult>> {
-  await requireSession()
   try {
+    await requireSession()
     const data = await scanBeneficiaryDuplicates(input)
     return { success: true, data }
   } catch (error) {

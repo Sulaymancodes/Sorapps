@@ -91,6 +91,7 @@ function mapSale(
     gps_locked: row.gpsLocked,
     gps_out_of_area: row.gpsOutOfArea,
     site_photo_url: row.sitePhotoUrl || '',
+    unlock_pin: row.unlockPin || '',
     created_by_user_id: row.createdByUserId ?? undefined,
   }
 }
@@ -140,6 +141,21 @@ function mapSchedule(
       reminder: inst.reminder,
     })),
   }
+}
+
+export async function saveSaleUnlockPin(saleId: string, pin: string) {
+  const value = pin.trim()
+  if (!saleId || !value) return
+  await db.update(sales).set({ unlockPin: value }).where(eq(sales.id, saleId))
+}
+
+export async function getSaleUnlockPin(saleId: string) {
+  const [row] = await db
+    .select({ unlockPin: sales.unlockPin })
+    .from(sales)
+    .where(eq(sales.id, saleId))
+    .limit(1)
+  return row?.unlockPin?.trim() || ''
 }
 
 export async function listSales(): Promise<Sale[]> {

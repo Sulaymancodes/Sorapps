@@ -735,7 +735,7 @@ export function SaleForm({
           lga: selectedLga || undefined,
           address: composedAddressHint || undefined,
           serial: serials.length ? serials : undefined,
-        })
+        }).catch(() => ({ success: false as const, error: 'scan failed' }))
         if (!result.success) return
         setSoftMatches(result.data.soft)
         if (!result.data.soft.length) setSoftAcknowledged(false)
@@ -1372,7 +1372,19 @@ export function SaleForm({
     setSitePhotoFile(null)
     setSiteError(null)
 
-    router.push(`/sales?created=${result.data.sale.id}&invoice=${result.data.invoice.id}`)
+    const createdQuery = new URLSearchParams({
+      created: result.data.sale.id,
+      invoice: result.data.invoice.id,
+    })
+    if (result.data.unlock_pin) {
+      createdQuery.set('unlock_pin', result.data.unlock_pin)
+    }
+    if (result.data.activation_warning) {
+      createdQuery.set('activation_warning', result.data.activation_warning)
+    }
+    document.querySelector('main')?.scrollTo({ top: 0, left: 0 })
+    window.scrollTo({ top: 0, left: 0 })
+    router.push(`/sales?${createdQuery.toString()}`)
     router.refresh()
   }
 

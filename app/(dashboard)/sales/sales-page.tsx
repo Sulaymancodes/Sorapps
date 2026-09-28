@@ -131,6 +131,7 @@ export default function SalesPage({
           s.status,
           s.payment_type,
           s.notes,
+          s.unlock_pin,
           customer?.id,
           customer?.name,
           customer?.email,
@@ -229,7 +230,12 @@ export default function SalesPage({
       )}
 
       {createdId && (
-        <SaleCreatedModal saleId={createdId} invoiceId={createdInvoice} />
+        <SaleCreatedModal
+          saleId={createdId}
+          invoiceId={createdInvoice}
+          unlockPin={searchParams.get('unlock_pin')}
+          activationWarning={searchParams.get('activation_warning')}
+        />
       )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -392,6 +398,7 @@ export default function SalesPage({
                   'Amount',
                   'Paid',
                   'Status',
+                  'PIN',
                   'Details',
                   ...(isAdmin ? ['Action'] : []),
                 ].map((h, i) => (
@@ -412,7 +419,7 @@ export default function SalesPage({
                 const customer = customers.get(sale.customer_id)
                 const schedule = schedules.get(sale.id)
                 const isExpanded = expandedSale === sale.id
-                const colSpan = isAdmin ? 9 : 8
+                const colSpan = isAdmin ? 10 : 9
 
                 return (
                   <Fragment key={sale.id}>
@@ -450,6 +457,9 @@ export default function SalesPage({
                             .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
                             .join(' ')}
                         </span>
+                      </td>
+                      <td className="px-5 py-4 font-mono text-sm font-semibold tracking-wide">
+                        {sale.unlock_pin || '—'}
                       </td>
                       <td className="px-5 py-4">
                         <Button
@@ -531,6 +541,16 @@ export default function SalesPage({
                             </div>
 
                             <div>
+                              {sale.unlock_pin ? (
+                                <div className="mb-4 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Unlock PIN
+                                  </p>
+                                  <p className="mt-1 font-mono text-xl font-semibold tracking-[0.18em] text-primary">
+                                    {sale.unlock_pin}
+                                  </p>
+                                </div>
+                              ) : null}
                               <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                                 {paymentPlanDetail(sale)}
                               </p>

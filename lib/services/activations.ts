@@ -1,10 +1,11 @@
-import { randomInt } from 'node:crypto'
 import { desc, eq } from 'drizzle-orm'
 import { addDays } from 'date-fns'
 import { db } from '@/lib/db'
 import { activationCodes, customers, sales, warranties } from '@/lib/db/schema'
 import { calculateValidityDays, getPaygoBaseValidityDays } from '@/lib/paygo/validity'
+import { fetchBeebeeActivation, toBeebeeDayToken } from '@/lib/services/beebeejump'
 import { getExpectedAmountForSale } from '@/lib/services/payments'
+import { saveSaleUnlockPin } from '@/lib/services/sales'
 import { nextId } from '@/lib/utils/ids'
 import {
   buildActivationSmsBody,
@@ -47,11 +48,7 @@ export type SendActivationInput = {
   expected_amount?: number
   payment_id?: string
   created_by_user_id?: string
-}
-
-function generateActivationCode(length = 6) {
-  const max = 10 ** length
-  return String(randomInt(0, max)).padStart(length, '0')
+  forever?: boolean
 }
 
 function mapRow(
@@ -179,14 +176,33 @@ export async function sendActivationSms(
       ? Math.round(expectedAmount)
       : null
 
-  const code = generateActivationCode(6)
+  let forever = Boolean(input.forever)
+  if (saleId && !forever) {
+    const saleRows = await db.select().from(sales).where(eq(sales.id, saleId)).limit(1)
+    const sale = saleRows[0]
+    if (sale?.paymentType === 'full' || sale?.status === 'paid') forever = true
+  }
+
+  if (!deviceSerial) {
+    throw new Error('Device serial number is required to request a BeeBeeJump PIN')
+  }
+
+  const beebeeDay = toBeebeeDayToken(validityDays, forever)
+  const beebee = await fetchBeebeeActivation({
+    sn: deviceSerial,
+    day: beebeeDay,
+  })
+  const code = beebee.pin
+  if (forever) validityDays = Math.max(validityDays, 3650)
+
   const messageBody = buildActivationSmsBody({
     customerName: customer.name.split(/\s+/)[0] || customer.name,
     code,
-    deviceSerial: deviceSerial || undefined,
+    deviceSerial,
     validityDays,
     amountPaid: amountPaid || undefined,
     isPartial,
+    forever,
   })
 
   const existing = await db.select({ id: activationCodes.id }).from(activationCodes)
@@ -217,8 +233,13 @@ export async function sendActivationSms(
       isPartial,
       expiresAt,
       createdByUserId: input.created_by_user_id || null,
+      providerResponse: JSON.stringify({ beebee: beebee.raw, day: beebeeDay }),
     })
     .returning()
+
+  if (saleId) {
+    await saveSaleUnlockPin(saleId, code)
+  }
 
   const sms = await sendBulkSms({
     to: phone,
@@ -277,5 +298,37 @@ export async function resendActivationSms(id: string): Promise<{ activation: Act
     amount_paid: existing.amountPaid || undefined,
     expected_amount: existing.expectedAmount ?? undefined,
     payment_id: existing.paymentId || undefined,
+  })
+}
+
+export async function issueActivationForSale(input: {
+  sale_id: string
+  customer_id: string
+  amount_paid: number
+  expected_amount?: number
+  payment_type?: string
+  phone?: string
+  created_by_user_id?: string
+}): Promise<{ activation: ActivationRecord }> {
+  const warrantyRows = await db
+    .select()
+    .from(warranties)
+    .where(eq(warranties.saleId, input.sale_id))
+
+  const warranty = warrantyRows.find((row) => row.serialNumber.trim())
+  if (!warranty) {
+    throw new Error('Add the device serial on the sale before sending a BeeBeeJump PIN')
+  }
+
+  return sendActivationSms({
+    customer_id: input.customer_id,
+    sale_id: input.sale_id,
+    warranty_id: warranty.id,
+    device_serial: warranty.serialNumber,
+    phone: input.phone,
+    amount_paid: input.amount_paid,
+    expected_amount: input.expected_amount,
+    forever: input.payment_type === 'full',
+    created_by_user_id: input.created_by_user_id,
   })
 }

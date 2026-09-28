@@ -93,6 +93,7 @@ export interface Sale {
   gps_locked?: boolean
   gps_out_of_area?: boolean
   site_photo_url?: string
+  unlock_pin?: string
   created_by_user_id?: string
 }
 

@@ -20,6 +20,7 @@ const AGENT_ROUTES = [
   '/customers/new',
   '/customers/drafts',
   '/activations',
+  '/unlock',
   '/calendar',
   '/settings',
 ]
@@ -135,6 +136,7 @@ export async function findCachedAppPath(preferred?: string | null) {
     '/dashboard',
     '/calendar',
     '/activations',
+    '/unlock',
     '/settings',
     '/login',
     '/~offline',
