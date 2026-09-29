@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { createDocumentUploadUrlAction } from '@/app/actions/uploads'
 import { isBrowserOnline, isLikelyNetworkError } from '@/lib/offline/network'
+import { savePhotoOnThisPhone } from '@/lib/offline/save-phone-photo'
 import type { PendingDocument } from '@/lib/offline/sale-drafts'
 import type { DocumentDocType } from '@/lib/types/crm'
 import { cn } from '@/lib/utils'
@@ -46,18 +47,22 @@ export function DocumentUploader({
   defaultDocType = 'kyc',
   label = 'KYC / sales documents',
   description = 'Take a photo or upload JPG, PNG, or PDF — multiple pages for audit',
+  required = false,
+  error = null,
 }: {
   value: PendingDocument[]
   onChange: (next: PendingDocument[]) => void
   defaultDocType?: DocumentDocType
   label?: string
   description?: string
+  required?: boolean
+  error?: string | null
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const [docType, setDocType] = useState<DocumentDocType>(defaultDocType)
   const [uploading, setUploading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
 
   function localDocFromFile(file: File, page: number): PendingDocument {
     let type =
@@ -76,9 +81,9 @@ export function DocumentUploader({
     }
   }
 
-  async function onFilesSelected(files: FileList | null) {
+  async function onFilesSelected(files: FileList | null, fromCamera = false) {
     if (!files?.length) return
-    setError(null)
+    setUploadError(null)
     setUploading(true)
 
     const added: PendingDocument[] = []
@@ -94,6 +99,9 @@ export function DocumentUploader({
         }
         if (file.size > 12 * 1024 * 1024) {
           throw new Error(`${file.name || 'File'}: max 12 MB per file`)
+        }
+        if (fromCamera && local.content_type.startsWith('image/')) {
+          void savePhotoOnThisPhone(file)
         }
 
         if (!online) {
@@ -133,10 +141,10 @@ export function DocumentUploader({
       }
       onChange([...value, ...added])
       if (!online || added.some((doc) => doc.file && !doc.file_url)) {
-        setError(null)
+        setUploadError(null)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed')
+      setUploadError(err instanceof Error ? err.message : 'Upload failed')
     } finally {
       setUploading(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
@@ -152,7 +160,12 @@ export function DocumentUploader({
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <Label>{label}</Label>
+          <Label>
+            {label}
+            <span className="ml-2 font-normal normal-case tracking-normal text-muted-foreground">
+              {required ? '(required)' : '(optional)'}
+            </span>
+          </Label>
           <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -198,7 +211,7 @@ export function DocumentUploader({
             accept={ACCEPT_CAMERA}
             capture="environment"
             className="hidden"
-            onChange={(e) => void onFilesSelected(e.target.files)}
+            onChange={(e) => void onFilesSelected(e.target.files, true)}
           />
           <input
             ref={fileInputRef}
@@ -211,9 +224,9 @@ export function DocumentUploader({
         </div>
       </div>
 
-      {error && (
+      {(error || uploadError) && (
         <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          {error}
+          {error || uploadError}
         </p>
       )}
 

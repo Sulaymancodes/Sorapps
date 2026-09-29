@@ -8,6 +8,7 @@ import { CustomerForm } from '@/components/forms/CustomerForm'
 import { NewSalePageClient } from '@/app/(dashboard)/sales/new/new-sale-page-client'
 import { SaleDraftsPageClient } from '@/app/(dashboard)/sales/drafts/drafts-page-client'
 import { CustomerDraftsPageClient } from '@/app/(dashboard)/customers/drafts/drafts-page-client'
+import { DeviceSyncEntryCard } from '@/components/offline/OfflineSyncButton'
 import { useOfflineSyncOptional } from '@/components/offline/offline-sync-context'
 import type { CachedDashboardUser, OfflineFieldView } from '@/lib/offline/app-shell'
 
@@ -88,8 +89,9 @@ function OfflineFieldMenu({
     <PageShell>
       <PageHeader
         title={`Welcome back, ${user.name.split(' ')[0] || user.name}`}
-        description="This device is ready for field work without internet. New sales and customers are saved as drafts until you reconnect."
+        description="This device is ready for field work without internet. Sync once when you enter, then add sales and customers at your own pace."
       />
+      <DeviceSyncEntryCard />
       <div className="grid gap-3 sm:grid-cols-3">
         <button
           type="button"

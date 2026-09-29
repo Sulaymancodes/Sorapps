@@ -28,6 +28,7 @@ import type {
   SaleStatus,
 } from '@/lib/types/crm'
 import { nextId } from '@/lib/utils/ids'
+import { serialLookupKey, parseDeviceSerials, soldSerialMessage } from '@/lib/utils/serial'
 import { evaluateDeploymentArea, sameGpsPoint } from '@/lib/utils/gps'
 import {
   buildInstallmentsByInterval,
@@ -346,7 +347,7 @@ export async function createSale(
     throw new Error('GPS capture must be locked before saving')
   }
   if (!input.site_photo_url?.trim()) {
-    throw new Error('Upload a site photo before saving this sale')
+    throw new Error('Upload a unit photo before saving this sale')
   }
 
   if (!(input.dares_type_of_payment || '').trim()) {
@@ -436,15 +437,6 @@ export async function createSale(
     }
     if (!(customer.customerType || '').trim()) {
       throw new Error('Update this customer with customer type before creating a claimable sale')
-    }
-    if (
-      !(customer.addressBuildingFeatures || '').trim() ||
-      !(customer.addressStreet || '').trim() ||
-      !(customer.addressLandmark || '').trim()
-    ) {
-      throw new Error(
-        'Update this customer with structured address (building, street, landmark) before creating a claimable sale'
-      )
     }
 
     const gpsCheck =
@@ -793,20 +785,16 @@ export async function createSale(
     // One warranty per sold unit — serial from the sale line when provided
     const existingWarranties = await tx.select({ id: warranties.id, serialNumber: warranties.serialNumber }).from(warranties)
     const usedSerials = new Set(
-      existingWarranties.map((w) => w.serialNumber.trim().toLowerCase()).filter(Boolean)
+      existingWarranties.map((w) => serialLookupKey(w.serialNumber)).filter(Boolean)
     )
 
     const parseLineSerials = (raw: string | undefined, qty: number): string[] => {
-      const parts = (raw || '')
-        .split(/[,\n]/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-      if (parts.length === 0) return Array.from({ length: qty }, () => '')
+      const parts = parseDeviceSerials(raw)
+      if (parts.length === 0) {
+        throw new Error('Enter a device serial number for every unit')
+      }
       if (parts.length === 1 && qty === 1) return parts
       if (parts.length === qty) return parts
-      if (parts.length === 1 && qty > 1) {
-        return [parts[0], ...Array.from({ length: qty - 1 }, () => '')]
-      }
       throw new Error(
         `Serial count must match quantity (${qty}). Separate multiple serials with commas.`
       )
@@ -818,10 +806,17 @@ export async function createSale(
       incomingSerials.push(...parseLineSerials(line.serial_number, qty))
     }
     for (const serial of incomingSerials) {
-      if (!serial) continue
-      const key = serial.toLowerCase()
+      const key = serialLookupKey(serial)
+      if (!key) throw new Error('Enter a device serial number for every unit')
       if (usedSerials.has(key)) {
-        throw new Error(`Serial number already registered: ${serial}`)
+        throw new Error(
+          soldSerialMessage({
+            serial,
+            sale_id: '',
+            customer_id: '',
+            customer_name: '',
+          })
+        )
       }
       usedSerials.add(key)
     }

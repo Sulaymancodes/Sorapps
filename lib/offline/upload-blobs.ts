@@ -20,7 +20,7 @@ export async function uploadSitePhotoFile(file: File) {
   const contentType = file.type || 'image/jpeg'
   const prepared = await createSitePhotoUploadUrlAction({
     contentType,
-    fileName: file.name || 'site.jpg',
+    fileName: file.name || 'unit.jpg',
   })
   if (!prepared.success) throw new Error(prepared.error)
   await putFile(prepared.data.uploadUrl, file, contentType)

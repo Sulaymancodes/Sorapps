@@ -43,11 +43,6 @@ export const metadata: Metadata = {
     icon: [
       {
         url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
       },
       {
         url: '/icon.svg',
@@ -72,18 +67,15 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  colorScheme: 'light dark',
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#1B4332' },
-    { media: '(prefers-color-scheme: dark)', color: '#2D6A4F' },
-  ],
+  colorScheme: 'light',
+  themeColor: '#1B4332',
   userScalable: true,
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
 }
 
-const themeInitScript = `(function(){try{var t=localStorage.getItem('sorapps-theme');var d=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.classList.toggle('dark',d);document.documentElement.classList.toggle('light',!d)}catch(e){}})();`
+const themeInitScript = `(function(){try{document.documentElement.classList.remove('dark');document.documentElement.classList.add('light');localStorage.setItem('sorapps-theme','light')}catch(e){}})();`
 
 export default function RootLayout({
   children,
@@ -91,7 +83,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${figtree.variable} ${syne.variable} bg-background`}>
+    <html lang="en" suppressHydrationWarning className={`${figtree.variable} ${syne.variable} light bg-background`}>
       <body className="font-sans antialiased text-foreground">
         <Script id="sorapps-theme-init" strategy="beforeInteractive">
           {themeInitScript}

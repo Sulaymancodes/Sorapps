@@ -67,6 +67,7 @@ export type SaleDraftFormValues = {
   cost_to_end_user_ngn: number
   downpayment_amount_ngn: number
   items: { product_id: string; quantity: number; serial_number: string }[]
+  unlock_pin?: string
 }
 
 export type SaleDraft = {

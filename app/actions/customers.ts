@@ -15,6 +15,7 @@ import {
   type DuplicateScanResult,
 } from '@/lib/services/customers'
 import { createCustomerDocuments } from '@/lib/services/documents'
+import { assertKycUploadsIfRequired } from '@/lib/services/org-settings'
 import type { Customer, DocumentUploadInput } from '@/lib/types/crm'
 
 const documentSchema = z.object({
@@ -35,9 +36,9 @@ const customerSchema = z
     bvn: z.string().optional(),
     address: z.string().optional().default(''),
     address_house_number: z.string().optional().default(''),
-    address_building_features: z.string().min(1, 'Building features required'),
-    address_street: z.string().min(1, 'Street / identifying features required'),
-    address_landmark: z.string().min(1, 'Nearest landmark required'),
+    address_building_features: z.string().optional().default(''),
+    address_street: z.string().optional().default(''),
+    address_landmark: z.string().optional().default(''),
     city: z.string().min(1, 'City is required'),
     state: z.string().min(1, 'State is required'),
     lga: z.string().optional(),
@@ -109,6 +110,7 @@ export async function createCustomerAction(
       { state: parsed.data.state, lga: parsed.data.lga },
       access
     )
+    await assertKycUploadsIfRequired(parsed.data.documents)
     const { documents, ...customerData } = parsed.data
     const customer = await createCustomer({
       ...customerData,
@@ -150,6 +152,7 @@ export async function updateCustomerAction(
       { state: parsed.data.state, lga: parsed.data.lga },
       access
     )
+    await assertKycUploadsIfRequired(parsed.data.documents, { customerId: id })
     const { documents, ...customerData } = parsed.data
     const customer = await updateCustomer(id, {
       ...customerData,

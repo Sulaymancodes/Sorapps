@@ -13,6 +13,7 @@ import {
   Unlock,
   UserPlus,
   Users,
+  KeyRound,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -44,7 +45,8 @@ import {
   todayInLagos,
 } from '@/lib/paygo/schedule'
 import { getLgasForState } from '@/lib/constants/lgas'
-import { createSaleAction } from '@/app/actions/sales'
+import { checkSoldSerialsAction, createSaleAction } from '@/app/actions/sales'
+import { resolveUnlockPinAction } from '@/app/actions/unlocks'
 import {
   checkCustomerDuplicateAction,
   scanBeneficiaryDuplicatesAction,
@@ -62,6 +64,17 @@ import {
 } from '@/lib/offline/sale-drafts'
 import { isBrowserOnline, isLikelyNetworkError } from '@/lib/offline/network'
 import { uploadPendingDocuments, uploadSitePhotoFile } from '@/lib/offline/upload-blobs'
+import { parseDeviceSerials, serialLookupKey, sameSerialKey, soldSerialMessage } from '@/lib/utils/serial'
+import {
+  checkSerialsAgainstLocalPool,
+  pinsForSaleSerials,
+  reserveUnlocksForDraft,
+  consumeUnlocksLocally,
+  type CachedUnlock,
+} from '@/lib/offline/unlock-pool'
+import { refreshUnlockPoolSnapshot } from '@/lib/offline/sync-unlock-pool'
+import { useKycUploadsRequired } from '@/lib/offline/org-settings'
+import { hasKycOrSalesFormDoc, KYC_UPLOAD_REQUIRED_MESSAGE } from '@/lib/utils/kyc-docs'
 import type { DuplicateMatch as SoftDuplicateMatch } from '@/lib/services/customers'
 import type {
   Customer,
@@ -88,6 +101,17 @@ const BVN_DIGITS = 11
 const PHONE_LOCAL_DIGITS = 11
 const PHONE_INTL_DIGITS = 13
 const UNIQUE_CHECK_DEBOUNCE_MS = 600
+
+function localSerialProblem(serials: string[]) {
+  const seen = new Set<string>()
+  for (const serial of serials) {
+    const key = serialLookupKey(serial)
+    if (!key) return 'Enter a device serial number for every unit'
+    if (seen.has(key)) return `Serial number is repeated on this sale: ${serial}`
+    seen.add(key)
+  }
+  return null
+}
 
 function digitsOnly(value: string) {
   return value.replace(/\D/g, '')
@@ -143,6 +167,14 @@ type ProductLock = {
 }
 
 type CustomerMode = 'existing' | 'new'
+
+type LineUnlockPin = {
+  serial: string
+  pin: string
+  kind: 'partial' | 'full'
+  day_token: string
+  reused: boolean
+}
 
 type SaleFormValues = {
   customer_mode: CustomerMode
@@ -365,6 +397,12 @@ export function SaleForm({
   const [activeDraftId, setActiveDraftId] = useState<string | undefined>(draftId)
   const [draftSavedOpen, setDraftSavedOpen] = useState(false)
   const [isOnline, setIsOnline] = useState(true)
+  const [linePins, setLinePins] = useState<Record<number, LineUnlockPin>>({})
+  const [activateError, setActivateError] = useState<Record<number, string>>({})
+  const [activatingIndex, setActivatingIndex] = useState<number | null>(null)
+  const [serialSoldError, setSerialSoldError] = useState<string | null>(null)
+  const [kycError, setKycError] = useState<string | null>(null)
+  const kycUploadsRequired = useKycUploadsRequired()
 
   const {
     register,
@@ -438,6 +476,14 @@ export function SaleForm({
   const costToEndUserNgn = useWatch({ control, name: 'cost_to_end_user_ngn' })
   const daresPaymentPlan = useWatch({ control, name: 'dares_payment_plan' })
   const daresTypeOfPayment = useWatch({ control, name: 'dares_type_of_payment' })
+  const unlockKind = paymentType === 'full' ? 'full' : 'partial'
+  const unlockDays = Math.max(1, Math.round(Number(installmentIntervalDays) || 7))
+  const unlockLabel = unlockKind === 'full' ? 'full unlock' : `${unlockDays}-day PIN`
+
+  useEffect(() => {
+    setLinePins({})
+    setActivateError({})
+  }, [paymentType, installmentIntervalDays])
 
   const existingCustomer = useMemo(
     () => (customerId ? customers.find((c) => c.id === customerId) : undefined),
@@ -657,17 +703,8 @@ export function SaleForm({
   const bvnValue = useWatch({ control, name: 'new_customer.bvn' }) || ''
   const customerNameValue = useWatch({ control, name: 'new_customer.name' }) || ''
   const customerCityValue = useWatch({ control, name: 'new_customer.city' }) || ''
-  const customerBuildingValue =
-    useWatch({ control, name: 'new_customer.address_building_features' }) || ''
-  const customerStreetValue = useWatch({ control, name: 'new_customer.address_street' }) || ''
-  const customerLandmarkValue = useWatch({ control, name: 'new_customer.address_landmark' }) || ''
   const isMinor = useWatch({ control, name: 'new_customer.is_minor' })
   const guardianPhoneValue = useWatch({ control, name: 'new_customer.guardian_phone' }) || ''
-
-  const composedAddressHint = [customerBuildingValue, customerStreetValue, customerLandmarkValue]
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .join(' | ')
 
   useEffect(() => {
     if (customerMode !== 'new') return
@@ -733,21 +770,11 @@ export function SaleForm({
           city: customerCityValue || undefined,
           state: selectedState || undefined,
           lga: selectedLga || undefined,
-          address: composedAddressHint || undefined,
           serial: serials.length ? serials : undefined,
         }).catch(() => ({ success: false as const, error: 'scan failed' }))
         if (!result.success) return
         setSoftMatches(result.data.soft)
         if (!result.data.soft.length) setSoftAcknowledged(false)
-        // Surface hard serial hits into form error if any
-        const serialHard = result.data.hard.filter((m) =>
-          m.matched_fields?.includes('serial')
-        )
-        if (serialHard.length) {
-          setFormError(
-            `Device serial already registered to ${serialHard[0].name}. Use a different serial.`
-          )
-        }
       })()
     }, UNIQUE_CHECK_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
@@ -755,7 +782,6 @@ export function SaleForm({
     customerMode,
     customerNameValue,
     customerCityValue,
-    composedAddressHint,
     selectedState,
     selectedLga,
     phoneValue,
@@ -764,6 +790,62 @@ export function SaleForm({
     bvnValue,
     watchedItems,
   ])
+
+  useEffect(() => {
+    const serials = parseDeviceSerials((watchedItems || []).map((item) => item.serial_number))
+    const localProblem = serials.length ? localSerialProblem(serials) : null
+    if (localProblem) {
+      setSerialSoldError(localProblem)
+      return
+    }
+    if (!serials.length) {
+      setSerialSoldError(null)
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const local = await checkSerialsAgainstLocalPool(serials, activeDraftId).catch(() => ({}) as {
+          error?: string
+          unlock?: CachedUnlock
+        })
+        if (local.error) {
+          setSerialSoldError(local.error)
+          return
+        }
+
+        if (local.unlock) {
+          const firstIndex = (watchedItems || []).findIndex((item) =>
+            sameSerialKey(item.serial_number || '', local.unlock!.serial_number)
+          )
+          if (firstIndex >= 0) {
+            setLinePins((current) => ({
+              ...current,
+              [firstIndex]: {
+                serial: local.unlock!.serial_number,
+                pin: local.unlock!.pin,
+                kind: local.unlock!.kind,
+                day_token: local.unlock!.day_token,
+                reused: true,
+              },
+            }))
+          }
+        }
+
+        if (!isBrowserOnline()) {
+          setSerialSoldError(null)
+          return
+        }
+        const result = await checkSoldSerialsAction(serials).catch(() => ({
+          success: false as const,
+          error: 'check failed',
+        }))
+        if (!result.success) return
+        setSerialSoldError(result.data.hits[0] ? soldSerialMessage(result.data.hits[0]) : null)
+      })()
+    }, UNIQUE_CHECK_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [watchedItems, activeDraftId])
 
   const toggleGeoLock = () => {
     if (forcedGeo?.state) return
@@ -813,22 +895,28 @@ export function SaleForm({
 
   async function saveSaleAsDraft(values: SaleFormValues) {
     if (!siteGps?.locked || !sitePhotoFile) {
-      throw new Error('Site photo and GPS are required')
+      throw new Error('Unit photo and GPS are required')
     }
     const customerName =
       values.customer_mode === 'new'
         ? values.new_customer.name.trim()
         : customers.find((c) => c.id === values.customer_id)?.name || 'Existing customer'
+    const serials = parseDeviceSerials(values.items.map((item) => item.serial_number))
+    const pins = await pinsForSaleSerials(serials)
+    const unlockPin =
+      Object.values(linePins).find((row) => sameSerialKey(row.serial, serials[0] || ''))?.pin ||
+      pins[0]?.pin
     const saved = await upsertSaleDraft({
       localId: activeDraftId,
       label: customerName,
-      values: values as SaleDraftFormValues,
+      values: { ...(values as SaleDraftFormValues), unlock_pin: unlockPin },
       siteGps,
       sitePhoto: sitePhotoFile,
       documents,
       status: 'pending',
       syncError: null,
     })
+    await reserveUnlocksForDraft(saved.localId, serials)
     setActiveDraftId(saved.localId)
     return saved
   }
@@ -916,6 +1004,93 @@ export function SaleForm({
     setFormError(null)
     setActiveDraftId(undefined)
     setDraftSavedOpen(true)
+    setLinePins({})
+    setActivateError({})
+    setSerialSoldError(null)
+  }
+
+  async function activateLine(index: number) {
+    const serial = (getValues(`items.${index}.serial_number`) || '').trim()
+    if (!serial) {
+      setActivateError((current) => ({ ...current, [index]: 'Enter or scan a serial number first' }))
+      return
+    }
+    if (!isBrowserOnline()) {
+      const local = await checkSerialsAgainstLocalPool([serial], activeDraftId)
+      if (local.error) {
+        setActivateError((current) => ({ ...current, [index]: local.error! }))
+        setSerialSoldError(local.error)
+        return
+      }
+      if (local.unlock) {
+        setLinePins((current) => ({
+          ...current,
+          [index]: {
+            serial: local.unlock!.serial_number,
+            pin: local.unlock!.pin,
+            kind: local.unlock!.kind,
+            day_token: local.unlock!.day_token,
+            reused: true,
+          },
+        }))
+        return
+      }
+      setActivateError((current) => ({
+        ...current,
+        [index]:
+          'This serial is not in the downloaded unlock pool. Unlock it while online, then sync before going to site.',
+      }))
+      return
+    }
+
+    setActivatingIndex(index)
+    setActivateError((current) => ({ ...current, [index]: '' }))
+    try {
+      const localProblem = localSerialProblem([serial])
+      if (localProblem) {
+        setActivateError((current) => ({ ...current, [index]: localProblem }))
+        setSerialSoldError(localProblem)
+        return
+      }
+      const sold = await checkSoldSerialsAction([serial])
+      if (!sold.success) {
+        setActivateError((current) => ({ ...current, [index]: sold.error }))
+        return
+      }
+      if (sold.data.hits[0]) {
+        const message = soldSerialMessage(sold.data.hits[0])
+        setActivateError((current) => ({ ...current, [index]: message }))
+        setSerialSoldError(message)
+        return
+      }
+
+      const result = await resolveUnlockPinAction({
+        serial_number: serial,
+        kind: unlockKind,
+        validity_days: unlockKind === 'partial' ? unlockDays : undefined,
+      })
+      if (!result.success) {
+        setActivateError((current) => ({ ...current, [index]: result.error }))
+        return
+      }
+      setLinePins((current) => ({
+        ...current,
+        [index]: {
+          serial: result.data.serial_number || serial,
+          pin: result.data.pin,
+          kind: result.data.kind,
+          day_token: result.data.day_token,
+          reused: Boolean(result.data.reused),
+        },
+      }))
+    } catch (error) {
+      setActivateError((current) => ({
+        ...current,
+        [index]: error instanceof Error ? error.message : 'Failed to activate this serial',
+      }))
+    } finally {
+      setActivatingIndex(null)
+    }
   }
 
   const onSubmit = async (values: SaleFormValues) => {
@@ -928,11 +1103,15 @@ export function SaleForm({
     }
 
     if (!siteGps?.locked) {
-      setSiteError('Take the site photo to capture and lock GPS')
+      setSiteError('Take the unit photo to capture and lock GPS')
       return
     }
     if (!sitePhotoFile) {
-      setSiteError('Attach a site photo before saving')
+      setSiteError('Attach a unit photo before saving')
+      return
+    }
+    if (kycUploadsRequired && !hasKycOrSalesFormDoc(documents)) {
+      setKycError(KYC_UPLOAD_REQUIRED_MESSAGE)
       return
     }
 
@@ -994,22 +1173,6 @@ export function SaleForm({
         setError('new_customer.customer_type', { message: 'Select customer type' })
         return
       }
-      if (!nc.address_building_features.trim()) {
-        setError('new_customer.address_building_features', {
-          message: 'Enter building features',
-        })
-        return
-      }
-      if (!nc.address_street.trim()) {
-        setError('new_customer.address_street', {
-          message: 'Enter street / identifying features',
-        })
-        return
-      }
-      if (!nc.address_landmark.trim()) {
-        setError('new_customer.address_landmark', { message: 'Enter nearest landmark' })
-        return
-      }
       if (!nc.city.trim()) {
         setError('new_customer.city', { message: 'Enter a city' })
         return
@@ -1038,11 +1201,6 @@ export function SaleForm({
         city: nc.city,
         state: nc.state,
         lga: nc.lga,
-        address:
-          [nc.address_building_features, nc.address_street, nc.address_landmark]
-            .map((s) => (s || '').trim())
-            .filter(Boolean)
-            .join(' | ') || undefined,
         serial: serials,
       }).catch((error) => {
         if (isLikelyNetworkError(error)) return { success: false as const, error: 'offline' }
@@ -1171,6 +1329,46 @@ export function SaleForm({
       }
     }
 
+    const saleSerials = parseDeviceSerials(
+      values.items.filter((item) => item.product_id).map((item) => item.serial_number)
+    )
+    const localProblem = localSerialProblem(saleSerials)
+    if (localProblem) {
+      setSerialSoldError(localProblem)
+      setFormError(localProblem)
+      setError('items', { message: localProblem })
+      return
+    }
+    const localPool = await checkSerialsAgainstLocalPool(saleSerials, activeDraftId).catch(
+      () => ({}) as { error?: string }
+    )
+    if (localPool.error) {
+      setSerialSoldError(localPool.error)
+      setFormError(localPool.error)
+      setError('items', { message: localPool.error })
+      return
+    }
+    if (isBrowserOnline()) {
+      const sold = await checkSoldSerialsAction(saleSerials).catch((error) => {
+        if (isLikelyNetworkError(error)) return { success: false as const, error: 'offline' }
+        throw error
+      })
+      if (!sold.success) {
+        if (!(isLikelyNetworkError(sold.error) || sold.error === 'offline')) {
+          setFormError(sold.error)
+          return
+        }
+      } else if (sold.data.hits[0]) {
+        const message = soldSerialMessage(sold.data.hits[0])
+        setSerialSoldError(message)
+        setFormError(message)
+        setError('items', { message })
+        return
+      } else {
+        setSerialSoldError(null)
+      }
+    }
+
     if (!isBrowserOnline()) {
       try {
         await saveSaleAsDraft(values)
@@ -1192,7 +1390,7 @@ export function SaleForm({
         resetFormAfterQueue(values)
         return
       }
-      setSiteError(error instanceof Error ? error.message : 'Could not upload site photo or KYC')
+      setSiteError(error instanceof Error ? error.message : 'Could not upload unit photo or KYC')
       return
     }
 
@@ -1201,6 +1399,10 @@ export function SaleForm({
       values.payment_type === 'full'
         ? costToEndUser
         : Number(values.downpayment_amount_ngn) || 0
+    const firstSerial = values.items.find((item) => item.product_id)?.serial_number.trim() || ''
+    const preparedUnlockPin =
+      Object.values(linePins).find((row) => sameSerialKey(row.serial, firstSerial))?.pin ||
+      (await pinsForSaleSerials([firstSerial]))[0]?.pin
 
     const result = await createSaleAction({
       customer_id: values.customer_mode === 'existing' ? values.customer_id : undefined,
@@ -1208,16 +1410,16 @@ export function SaleForm({
         values.customer_mode === 'new'
           ? {
               name: values.new_customer.name.trim(),
-              email: values.new_customer.email.trim(),
+              email: '',
               phone: values.new_customer.phone.trim(),
               alternate_phone: values.new_customer.alternate_phone.trim(),
               nin: digitsOnly(values.new_customer.nin),
               bvn: digitsOnly(values.new_customer.bvn),
               address: '',
-              address_house_number: values.new_customer.address_house_number.trim(),
-              address_building_features: values.new_customer.address_building_features.trim(),
-              address_street: values.new_customer.address_street.trim(),
-              address_landmark: values.new_customer.address_landmark.trim(),
+              address_house_number: '',
+              address_building_features: '',
+              address_street: '',
+              address_landmark: '',
               city: values.new_customer.city.trim(),
               state: values.new_customer.state.trim(),
               lga: values.new_customer.lga.trim(),
@@ -1228,12 +1430,24 @@ export function SaleForm({
               customer_type: values.new_customer.customer_type.trim(),
               credit_limit: 0,
               is_minor: Boolean(values.new_customer.is_minor),
-              guardian_name: values.new_customer.guardian_name.trim(),
-              guardian_phone: values.new_customer.guardian_phone.trim(),
-              guardian_relationship: values.new_customer.guardian_relationship.trim(),
-              next_of_kin_name: values.new_customer.next_of_kin_name.trim(),
-              next_of_kin_phone: values.new_customer.next_of_kin_phone.trim(),
-              next_of_kin_relationship: values.new_customer.next_of_kin_relationship.trim(),
+              guardian_name: values.new_customer.is_minor
+                ? (values.new_customer.guardian_name || '').trim()
+                : '',
+              guardian_phone: values.new_customer.is_minor
+                ? (values.new_customer.guardian_phone || '').trim()
+                : '',
+              guardian_relationship: values.new_customer.is_minor
+                ? (values.new_customer.guardian_relationship || '').trim()
+                : '',
+              next_of_kin_name: values.new_customer.is_minor
+                ? (values.new_customer.next_of_kin_name || '').trim()
+                : '',
+              next_of_kin_phone: values.new_customer.is_minor
+                ? (values.new_customer.next_of_kin_phone || '').trim()
+                : '',
+              next_of_kin_relationship: values.new_customer.is_minor
+                ? (values.new_customer.next_of_kin_relationship || '').trim()
+                : '',
             }
           : undefined,
       payment_type: values.payment_type,
@@ -1272,6 +1486,7 @@ export function SaleForm({
       },
       site_photo_url: sitePhotoUrl,
       documents: remoteDocuments.length ? remoteDocuments : undefined,
+      ...(preparedUnlockPin ? { unlock_pin: preparedUnlockPin } : {}),
     }).catch((error) => {
       if (isLikelyNetworkError(error)) return { success: false as const, error: 'offline' }
       throw error
@@ -1371,6 +1586,8 @@ export function SaleForm({
     setSiteGps(null)
     setSitePhotoFile(null)
     setSiteError(null)
+    setLinePins({})
+    setActivateError({})
 
     const createdQuery = new URLSearchParams({
       created: result.data.sale.id,
@@ -1384,6 +1601,12 @@ export function SaleForm({
     }
     document.querySelector('main')?.scrollTo({ top: 0, left: 0 })
     window.scrollTo({ top: 0, left: 0 })
+    const soldSerials = values.items.filter((item) => item.product_id).map((item) => item.serial_number)
+    await consumeUnlocksLocally(soldSerials, {
+      sale_id: result.data.sale.id,
+      customer_id: result.data.sale.customer_id,
+    })
+    void refreshUnlockPoolSnapshot()
     router.push(`/sales?${createdQuery.toString()}`)
     router.refresh()
   }
@@ -1549,9 +1772,25 @@ export function SaleForm({
                       type="checkbox"
                       className="mt-0.5"
                       checked={Boolean(isMinor)}
-                      onChange={(e) =>
-                        setValue('new_customer.is_minor', e.target.checked, { shouldDirty: true })
-                      }
+                      onChange={(e) => {
+                        const checked = e.target.checked
+                        setValue('new_customer.is_minor', checked, { shouldDirty: true })
+                        if (checked) return
+                        setValue('new_customer.guardian_name', '')
+                        setValue('new_customer.guardian_phone', '')
+                        setValue('new_customer.guardian_relationship', '')
+                        setValue('new_customer.next_of_kin_name', '')
+                        setValue('new_customer.next_of_kin_phone', '')
+                        setValue('new_customer.next_of_kin_relationship', '')
+                        clearErrors([
+                          'new_customer.guardian_name',
+                          'new_customer.guardian_phone',
+                          'new_customer.guardian_relationship',
+                          'new_customer.next_of_kin_name',
+                          'new_customer.next_of_kin_phone',
+                          'new_customer.next_of_kin_relationship',
+                        ])
+                      }}
                     />
                     <span>
                       <span className="font-medium">Minor / no personal phone</span>
@@ -1622,67 +1861,6 @@ export function SaleForm({
                   }}
                   onSearch={() => void runDuplicateCheck('bvn')}
                 />
-
-                <div>
-                  <Label htmlFor="new_customer.email">Email (optional)</Label>
-                  <Input
-                    id="new_customer.email"
-                    type="email"
-                    placeholder="name@email.com"
-                    {...register('new_customer.email')}
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="new_customer.address_house_number">House number (optional)</Label>
-                  <Input
-                    id="new_customer.address_house_number"
-                    placeholder="e.g. 12A"
-                    {...register('new_customer.address_house_number')}
-                  />
-                </div>
-
-                <div className="md:col-span-2">
-                  <Label htmlFor="new_customer.address_building_features">Building features</Label>
-                  <Input
-                    id="new_customer.address_building_features"
-                    placeholder="e.g. White bungalow with blue gate"
-                    {...register('new_customer.address_building_features')}
-                  />
-                  {errors.new_customer?.address_building_features && (
-                    <p className="mt-1 text-xs text-destructive">
-                      {errors.new_customer.address_building_features.message}
-                    </p>
-                  )}
-                </div>
-
-                <div className="md:col-span-2">
-                  <Label htmlFor="new_customer.address_street">Street / identifying features</Label>
-                  <Input
-                    id="new_customer.address_street"
-                    placeholder="e.g. Adeola Odeku Street"
-                    {...register('new_customer.address_street')}
-                  />
-                  {errors.new_customer?.address_street && (
-                    <p className="mt-1 text-xs text-destructive">
-                      {errors.new_customer.address_street.message}
-                    </p>
-                  )}
-                </div>
-
-                <div className="md:col-span-2">
-                  <Label htmlFor="new_customer.address_landmark">Nearest landmark</Label>
-                  <Input
-                    id="new_customer.address_landmark"
-                    placeholder="e.g. Near First Bank"
-                    {...register('new_customer.address_landmark')}
-                  />
-                  {errors.new_customer?.address_landmark && (
-                    <p className="mt-1 text-xs text-destructive">
-                      {errors.new_customer.address_landmark.message}
-                    </p>
-                  )}
-                </div>
 
                 <div>
                   <Label htmlFor="new_customer.city">City</Label>
@@ -1786,15 +1964,24 @@ export function SaleForm({
                 <div>
                   <p className="text-sm font-medium">Parent / guardian & next of kin</p>
                   <p className="text-xs text-muted-foreground">
-                    Required when the beneficiary is a minor or has no personal phone
+                    {isMinor
+                      ? 'Required for this customer — guardian phone is used for SMS'
+                      : 'Tick “Minor / no personal phone” above to fill these'}
                   </p>
                 </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <fieldset
+                  disabled={!isMinor}
+                  className={cn(
+                    'grid grid-cols-1 gap-4 md:grid-cols-2',
+                    !isMinor && 'pointer-events-none opacity-50'
+                  )}
+                >
                   <div>
                     <Label htmlFor="new_customer.guardian_name">Parent / guardian name</Label>
                     <Input
                       id="new_customer.guardian_name"
                       {...register('new_customer.guardian_name')}
+                      disabled={!isMinor}
                     />
                     {errors.new_customer?.guardian_name && (
                       <p className="mt-1 text-xs text-destructive">
@@ -1807,6 +1994,7 @@ export function SaleForm({
                     <Select
                       id="new_customer.guardian_relationship"
                       {...register('new_customer.guardian_relationship')}
+                      disabled={!isMinor}
                     >
                       <option value="">Select…</option>
                       {GUARDIAN_RELATIONSHIPS.map((r) => (
@@ -1828,6 +2016,7 @@ export function SaleForm({
                       type="tel"
                       inputMode="numeric"
                       maxLength={13}
+                      disabled={!isMinor}
                       value={guardianPhoneValue}
                       onChange={(e) => {
                         const digits = e.target.value.replace(/\D/g, '')
@@ -1849,6 +2038,7 @@ export function SaleForm({
                     <Input
                       id="new_customer.next_of_kin_name"
                       {...register('new_customer.next_of_kin_name')}
+                      disabled={!isMinor}
                     />
                   </div>
                   <div>
@@ -1856,6 +2046,7 @@ export function SaleForm({
                     <Select
                       id="new_customer.next_of_kin_relationship"
                       {...register('new_customer.next_of_kin_relationship')}
+                      disabled={!isMinor}
                     >
                       <option value="">Select…</option>
                       {GUARDIAN_RELATIONSHIPS.map((r) => (
@@ -1882,19 +2073,29 @@ export function SaleForm({
                           })
                         },
                       })}
+                      disabled={!isMinor}
                     />
                   </div>
-                </div>
+                </fieldset>
               </div>
-
-              <DocumentUploader
-                value={documents}
-                onChange={setDocuments}
-                label="KYC / sales form uploads"
-                description="Take a photo or upload JPG, PNG, or PDF — multiple pages for audit"
-              />
             </div>
           )}
+
+          <DocumentUploader
+            value={documents}
+            onChange={(next) => {
+              setDocuments(next)
+              if (hasKycOrSalesFormDoc(next)) setKycError(null)
+            }}
+            label="KYC / sales form uploads"
+            description={
+              kycUploadsRequired
+                ? 'Required. Take a photo or upload JPG, PNG, or PDF — multiple pages for audit'
+                : 'Optional. Take a photo or upload JPG, PNG, or PDF — multiple pages for audit'
+            }
+            required={kycUploadsRequired}
+            error={kycError}
+          />
 
           <div>
             <Label>Payment type</Label>
@@ -2185,8 +2386,9 @@ export function SaleForm({
           {fields.map((field, index) => (
             <div
               key={field.id}
-              className="grid grid-cols-1 items-end gap-3 rounded-lg border border-border/60 bg-secondary/20 p-3 md:grid-cols-[1fr_100px_1fr_auto]"
+              className="space-y-3 rounded-lg border border-border/60 bg-secondary/20 p-3"
             >
+              <div className="grid grid-cols-1 items-end gap-3 md:grid-cols-[1fr_100px_1fr_auto]">
               <div>
                 <Label htmlFor={`items.${index}.product_id`}>Product</Label>
                 <Select
@@ -2226,12 +2428,22 @@ export function SaleForm({
                 <SerialBarcodeField
                   id={`items.${index}.serial_number`}
                   value={watchedItems?.[index]?.serial_number || ''}
-                  onChange={(next) =>
+                  onChange={(next) => {
                     setValue(`items.${index}.serial_number`, next, {
                       shouldDirty: true,
                       shouldValidate: true,
                     })
-                  }
+                    setLinePins((current) => {
+                      if (!current[index]) return current
+                      if (sameSerialKey(current[index].serial, next)) {
+                        return current
+                      }
+                      const copy = { ...current }
+                      delete copy[index]
+                      return copy
+                    })
+                    setActivateError((current) => ({ ...current, [index]: '' }))
+                  }}
                   placeholder="Device serial…"
                 />
               </div>
@@ -2250,6 +2462,47 @@ export function SaleForm({
               ) : (
                 <div className="hidden md:block" />
               )}
+              </div>
+              {(watchedItems?.[index]?.serial_number || '').trim() ? (
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-1.5"
+                    disabled={activatingIndex === index}
+                    onClick={() => void activateLine(index)}
+                  >
+                    <KeyRound className="size-4" />
+                    {activatingIndex === index ? 'Activating…' : `Activate ${unlockLabel}`}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Checks the shared unlock pool first. If this serial is not unlocked yet and you
+                    are online, it fetches the PIN from BeeBeeJump. Offline, only downloaded unused
+                    PINs can be attached.
+                  </p>
+                  {activateError[index] ? (
+                    <p className="text-sm text-destructive">{activateError[index]}</p>
+                  ) : null}
+                  {linePins[index] &&
+                  linePins[index].serial.trim() &&
+                  sameSerialKey(
+                    linePins[index].serial,
+                    watchedItems?.[index]?.serial_number || ''
+                  ) ? (
+                    <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-3">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        {linePins[index].reused
+                          ? 'PIN from shared unlock pool'
+                          : 'PIN fetched from BeeBeeJump'}{' '}
+                        · {linePins[index].kind === 'full' ? 'Full' : linePins[index].day_token.replace('Days', ' days')}
+                      </p>
+                      <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.18em] text-primary">
+                        {linePins[index].pin}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ))}
           {productLocked && firstProductId && (
@@ -2284,14 +2537,14 @@ export function SaleForm({
         error={siteError}
       />
 
-      {formError && (
+      {formError || serialSoldError ? (
         <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {formError}
+          {formError || serialSoldError}
         </p>
-      )}
+      ) : null}
 
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={isSubmitting || (isOnline && hasDuplicates)}>
+        <Button type="submit" disabled={isSubmitting || Boolean(serialSoldError) || (isOnline && hasDuplicates)}>
           {!isOnline ? 'Save draft offline' : activeDraftId ? 'Save and sync' : 'Create sale'}
         </Button>
         <Button type="button" variant="outline" onClick={() => router.push('/sales')}>
@@ -2303,7 +2556,7 @@ export function SaleForm({
       <OfflineDraftSavedModal
         onClose={() => setDraftSavedOpen(false)}
         draftsHref="/sales/drafts"
-        message="This sale was saved as a draft on this device, including customer details, KYC, site photo, and GPS. It will sync automatically when you reconnect, or tap Sync now in the header."
+        message="This sale was saved as a draft on this device, including customer details, KYC, unit photo, and GPS. It will sync automatically when you reconnect, or tap Sync now in the header."
       />
     )}
     </>

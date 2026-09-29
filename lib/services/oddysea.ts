@@ -22,6 +22,7 @@ import {
   resolveDashboardRange,
 } from '@/lib/services/dashboard'
 import type { OddyseaFilters, OddyseaReport } from '@/lib/types/oddysea'
+import { getOrgSettings } from '@/lib/services/org-settings'
 
 export type { OddyseaFilters, OddyseaReport }
 
@@ -80,7 +81,7 @@ export async function getOddyseaReport(filters: OddyseaFilters): Promise<Oddysea
   const effectiveState = filters.state || area?.state || ''
   const effectiveLga = filters.lga || ''
 
-  const [saleRows, invoiceRows, paymentRows, warrantyRows, claimRows, documentRows, productRows] =
+  const [saleRows, invoiceRows, paymentRows, warrantyRows, claimRows, documentRows, productRows, settings] =
     await Promise.all([
       db
         .select({ sale: sales, customer: customers })
@@ -102,6 +103,7 @@ export async function getOddyseaReport(filters: OddyseaFilters): Promise<Oddysea
       db.select().from(warrantyClaims),
       db.select().from(customerDocuments),
       db.select().from(products),
+      getOrgSettings(),
     ])
 
   void productRows
@@ -262,7 +264,7 @@ export async function getOddyseaReport(filters: OddyseaFilters): Promise<Oddysea
       has_site_photo: hasPhoto,
       kyc_documents: kyc,
       sales_form_documents: salesForms,
-      evidence_complete: hasPhoto && (kyc > 0 || salesForms > 0),
+      evidence_complete: hasPhoto && (!settings.kyc_uploads_required || kyc > 0 || salesForms > 0),
       sale_date: (row.sale.date instanceof Date ? row.sale.date : new Date(row.sale.date)).toISOString(),
     }
   })
@@ -393,7 +395,10 @@ export async function getOddyseaReport(filters: OddyseaFilters): Promise<Oddysea
       })
     }
     const docs = docsByCustomer.get(row.customer.id) || []
-    if (!docs.some((d) => d.docType === 'kyc' || d.docType === 'sales_form')) {
+    if (
+      settings.kyc_uploads_required &&
+      !docs.some((d) => d.docType === 'kyc' || d.docType === 'sales_form')
+    ) {
       outstanding_issues.push({
         issue_type: 'missing_kyc_form',
         severity: 'medium',

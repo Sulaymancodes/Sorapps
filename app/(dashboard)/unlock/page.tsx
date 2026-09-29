@@ -1,13 +1,13 @@
 import { getSessionAccess, isNextRedirect, requireSession } from '@/lib/auth-server'
 import { isBeebeeJumpConfigured } from '@/lib/services/beebeejump'
-import { listUnlocksForUser } from '@/lib/services/unlocks'
+import { listTeamUnlocks } from '@/lib/services/unlocks'
 import { UnlockPageClient } from './unlock-page-client'
 
 export default async function UnlockPage() {
   try {
     const session = await requireSession()
     getSessionAccess(session)
-    const history = await listUnlocksForUser(session.user.id)
+    const history = await listTeamUnlocks()
 
     return (
       <UnlockPageClient
@@ -19,6 +19,7 @@ export default async function UnlockPage() {
           day_token: row.day_token,
           pin: row.pin,
           source: row.source,
+          sale_id: row.sale_id || '',
           created_at: row.created_at.toISOString(),
         }))}
       />

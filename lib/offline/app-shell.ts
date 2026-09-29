@@ -198,14 +198,37 @@ export function isSameOriginAppPath(href: string) {
   return true
 }
 
-export async function requestAppShellCache(urls: string[]) {
+export async function requestAppShellCache(
+  urls: string[],
+  options?: { waitUntilDone?: boolean; timeoutMs?: number }
+) {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
   if (!isBrowserOnline()) return
   const unique = [...new Set(urls.filter(Boolean))]
   if (unique.length === 0) return
   try {
-    const registration = await navigator.serviceWorker.ready
-    registration.active?.postMessage({ type: 'CACHE_APP_SHELL', urls: unique })
+    const timeoutMs = options?.timeoutMs ?? 12000
+    const registration = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise<null>((resolve) => {
+        window.setTimeout(() => resolve(null), options?.waitUntilDone ? 2500 : 4000)
+      }),
+    ])
+    const worker = registration?.active ?? navigator.serviceWorker.controller
+    if (!worker) return
+    if (!options?.waitUntilDone) {
+      worker.postMessage({ type: 'CACHE_APP_SHELL', urls: unique })
+      return
+    }
+    await new Promise<void>((resolve) => {
+      const timeout = window.setTimeout(resolve, timeoutMs)
+      const channel = new MessageChannel()
+      channel.port1.onmessage = () => {
+        window.clearTimeout(timeout)
+        resolve()
+      }
+      worker.postMessage({ type: 'CACHE_APP_SHELL', urls: unique }, [channel.port2])
+    })
   } catch {
     // Service worker may be disabled in development.
   }

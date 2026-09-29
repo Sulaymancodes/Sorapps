@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { useOfflineSync } from '@/components/offline/offline-sync-context'
+import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { formatDate } from '@/lib/utils/formatting'
 import type { SaleDraft } from '@/lib/offline/sale-drafts'
 
@@ -32,6 +33,7 @@ export function SaleDraftsPageClient() {
   } = useOfflineSync()
   const [busyId, setBusyId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [draftToDelete, setDraftToDelete] = useState<SaleDraft | null>(null)
 
   const sorted = useMemo(
     () => [...saleDrafts].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
@@ -69,13 +71,21 @@ export function SaleDraftsPageClient() {
     }
   }
 
-  async function handleDelete(draft: SaleDraft) {
-    const ok = window.confirm(
-      `Delete the local sale draft for ${draft.label || 'this sale'}? This only removes it from this device.`
-    )
-    if (!ok) return
+  function handleDelete(draft: SaleDraft) {
     setActionError(null)
-    await removeSaleDraft(draft.localId)
+    setDraftToDelete(draft)
+  }
+
+  async function confirmDelete() {
+    const draft = draftToDelete
+    if (!draft) return
+    setBusyId(draft.localId)
+    try {
+      await removeSaleDraft(draft.localId)
+      setDraftToDelete(null)
+    } finally {
+      setBusyId(null)
+    }
   }
 
   return (
@@ -224,7 +234,7 @@ export function SaleDraftsPageClient() {
                           variant="outline"
                           size="sm"
                           className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => void handleDelete(draft)}
+                          onClick={() => handleDelete(draft)}
                         >
                           <Trash2 className="size-3" />
                           Delete
@@ -238,6 +248,16 @@ export function SaleDraftsPageClient() {
           </div>
         )}
       </Panel>
+      <ConfirmModal
+        open={Boolean(draftToDelete)}
+        title={`Delete draft${draftToDelete?.label ? ` for ${draftToDelete.label}` : ''}?`}
+        description="This only removes the local sale draft from this device."
+        pending={Boolean(draftToDelete && busyId === draftToDelete.localId)}
+        onCancel={() => {
+          if (!busyId) setDraftToDelete(null)
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
     </PageShell>
   )
 }

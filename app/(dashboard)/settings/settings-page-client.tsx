@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { KeyRound, Moon, Settings, Sun, UserPlus } from 'lucide-react'
+import { KeyRound, Settings, UserPlus, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -21,14 +21,10 @@ import {
 } from '@/app/actions/users'
 import { authClient } from '@/lib/auth-client'
 import { clearCachedDashboardUser } from '@/lib/offline/app-shell'
+import { saveCachedOrgSettings } from '@/lib/offline/org-settings'
+import { updateKycUploadsRequiredAction } from '@/app/actions/org-settings'
 import type { AppRole } from '@/lib/roles'
-
-const THEME_KEY = 'sorapps-theme'
-
-function applyTheme(isDark: boolean) {
-  document.documentElement.classList.toggle('dark', isDark)
-  document.documentElement.classList.toggle('light', !isDark)
-}
+import { cn } from '@/lib/utils'
 
 type UserRow = {
   id: string
@@ -45,18 +41,19 @@ export function SettingsPageClient({
   isAdmin,
   currentUserId,
   users,
+  kycUploadsRequired,
 }: {
   isAdmin: boolean
   currentUserId: string
   users: UserRow[]
+  kycUploadsRequired: boolean
 }) {
   const router = useRouter()
-  const [isDark, setIsDark] = useState(false)
-  const [mounted, setMounted] = useState(false)
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [createdPassword, setCreatedPassword] = useState<string | null>(null)
+  const [kycRequired, setKycRequired] = useState(kycUploadsRequired)
 
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -66,26 +63,31 @@ export function SettingsPageClient({
   const [password, setPassword] = useState('')
   const [sendSms, setSendSms] = useState(true)
 
-  useEffect(() => {
-    const stored = localStorage.getItem(THEME_KEY)
-    const prefersDark =
-      stored === 'dark' ||
-      (stored === null && window.matchMedia('(prefers-color-scheme: dark)').matches)
-    setIsDark(prefersDark)
-    applyTheme(prefersDark)
-    setMounted(true)
-  }, [])
-
   const lgaOptions = useMemo(() => getLgasForState(state), [state])
-
-  const setTheme = (dark: boolean) => {
-    setIsDark(dark)
-    applyTheme(dark)
-    localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light')
-  }
 
   function refresh() {
     router.refresh()
+  }
+
+  function saveKycRequired(next: boolean) {
+    if (next === kycRequired) return
+    setError(null)
+    setSuccess(null)
+    startTransition(async () => {
+      const result = await updateKycUploadsRequiredAction({ kyc_uploads_required: next })
+      if (!result.success) {
+        setError(result.error)
+        return
+      }
+      setKycRequired(result.data.kyc_uploads_required)
+      saveCachedOrgSettings(result.data)
+      setSuccess(
+        result.data.kyc_uploads_required
+          ? 'KYC / sales form uploads are now compulsory on sale and customer forms.'
+          : 'KYC / sales form uploads are now optional.'
+      )
+      refresh()
+    })
   }
 
   function createAgent() {
@@ -126,43 +128,68 @@ export function SettingsPageClient({
       <PageHeader
         title="Settings"
         description={
-          isAdmin
-            ? 'Theme preferences and agent user management'
-            : 'Theme preferences for your account'
+          isAdmin ? 'Agent user management and account options' : 'Account options'
         }
       />
 
-      <Panel title="Display" description="Choose light or dark mode">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="font-medium">Theme</p>
-            <p className="text-sm text-muted-foreground">Applies on this device</p>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant={mounted && !isDark ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setTheme(false)}
-              className="gap-2"
-            >
-              <Sun className="size-4" />
-              Light
-            </Button>
-            <Button
-              variant={mounted && isDark ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setTheme(true)}
-              className="gap-2"
-            >
-              <Moon className="size-4" />
-              Dark
-            </Button>
-          </div>
-        </div>
-      </Panel>
-
       {isAdmin && (
         <>
+          <Panel
+            title="KYC / sales form uploads"
+            description="On New sale and customer forms, agents can skip these files unless you make them compulsory."
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => saveKycRequired(false)}
+                className={cn(
+                  'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
+                  !kycRequired
+                    ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
+                    : 'border-border/80 hover:border-primary/40'
+                )}
+              >
+                <FileText className="mt-0.5 size-5 text-primary" />
+                <div>
+                  <p className="font-medium">Optional</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Agents may skip KYC / sales form uploads
+                  </p>
+                </div>
+              </button>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => saveKycRequired(true)}
+                className={cn(
+                  'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
+                  kycRequired
+                    ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
+                    : 'border-border/80 hover:border-primary/40'
+                )}
+              >
+                <FileText className="mt-0.5 size-5 text-primary" />
+                <div>
+                  <p className="font-medium">Compulsory</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Agents must upload a KYC or sales form before saving
+                  </p>
+                </div>
+              </button>
+            </div>
+            {error && (
+              <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </p>
+            )}
+            {success && (
+              <p className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-900">
+                {success}
+              </p>
+            )}
+          </Panel>
+
           <Panel
             title="Create agent"
             description="Assign state + LGA. Password is generated (or set) and can be SMS’d to their phone."

@@ -18,7 +18,6 @@ import {
   DARES_CUSTOMER_CATEGORIES,
   DARES_CUSTOMER_TYPES,
   DARES_GENDERS,
-  composeDaresAddress,
 } from '@/lib/constants/dares'
 import { BUSINESS_TYPES, GUARDIAN_RELATIONSHIPS, NIGERIAN_STATES } from '@/lib/constants/options'
 import { getLgasForState } from '@/lib/constants/lgas'
@@ -34,6 +33,8 @@ import {
 } from '@/lib/offline/customer-drafts'
 import type { PendingDocument } from '@/lib/offline/sale-drafts'
 import { isBrowserOnline, isLikelyNetworkError } from '@/lib/offline/network'
+import { useKycUploadsRequired } from '@/lib/offline/org-settings'
+import { hasKycOrSalesFormDoc, KYC_UPLOAD_REQUIRED_MESSAGE } from '@/lib/utils/kyc-docs'
 import type { DuplicateMatch } from '@/lib/services/customers'
 import type { Customer, CustomerDocument, CustomerInput, DocumentUploadInput } from '@/lib/types/crm'
 
@@ -85,6 +86,7 @@ export function CustomerForm({
   const [documents, setDocuments] = useState<PendingDocument[]>(
     draft?.payload.documents ?? []
   )
+  const kycUploadsRequired = useKycUploadsRequired()
   const [softMatches, setSoftMatches] = useState<DuplicateMatch[]>([])
   const [hardMatches, setHardMatches] = useState<DuplicateMatch[]>([])
   const [softAcknowledged, setSoftAcknowledged] = useState(false)
@@ -136,29 +138,7 @@ export function CustomerForm({
   const watchedNin = useWatch({ control, name: 'nin' }) || ''
   const watchedBvn = useWatch({ control, name: 'bvn' }) || ''
   const watchedCity = useWatch({ control, name: 'city' }) || ''
-  const watchedHouseNumber = useWatch({ control, name: 'address_house_number' }) || ''
-  const watchedBuildingFeatures = useWatch({ control, name: 'address_building_features' }) || ''
-  const watchedStreet = useWatch({ control, name: 'address_street' }) || ''
-  const watchedLandmark = useWatch({ control, name: 'address_landmark' }) || ''
   const watchedGuardianPhone = useWatch({ control, name: 'guardian_phone' }) || ''
-
-  const composedAddress = useMemo(
-    () =>
-      composeDaresAddress({
-        house_number: watchedHouseNumber,
-        building_features: watchedBuildingFeatures,
-        street: watchedStreet,
-        landmark: watchedLandmark,
-        fallback: customer?.address || '',
-      }),
-    [
-      watchedHouseNumber,
-      watchedBuildingFeatures,
-      watchedStreet,
-      watchedLandmark,
-      customer?.address,
-    ]
-  )
 
   const stateOptions = (() => {
     if (selectedState && !(NIGERIAN_STATES as readonly string[]).includes(selectedState)) {
@@ -188,7 +168,6 @@ export function CustomerForm({
             city: watchedCity || undefined,
             state: selectedState || undefined,
             lga: selectedLga || undefined,
-            address: composedAddress || undefined,
             exclude_id: customer?.id || draft?.remoteId,
           })
           if (!result.success) return
@@ -207,7 +186,6 @@ export function CustomerForm({
     watchedNin,
     watchedBvn,
     watchedCity,
-    composedAddress,
     selectedState,
     selectedLga,
     watchedGuardianPhone,
@@ -259,18 +237,6 @@ export function CustomerForm({
       return
     }
 
-    if (!(values.address_building_features || '').trim()) {
-      setError('address_building_features', { message: 'Enter building features' })
-      return
-    }
-    if (!(values.address_street || '').trim()) {
-      setError('address_street', { message: 'Enter a street' })
-      return
-    }
-    if (!(values.address_landmark || '').trim()) {
-      setError('address_landmark', { message: 'Enter a landmark' })
-      return
-    }
     if (!values.city.trim()) {
       setError('city', { message: 'Enter a city' })
       return
@@ -284,28 +250,29 @@ export function CustomerForm({
       setError('state', { message: 'Select a Nigerian state' })
       return
     }
-
-    const composed = composeDaresAddress({
-      house_number: values.address_house_number,
-      building_features: values.address_building_features,
-      street: values.address_street,
-      landmark: values.address_landmark,
-    })
+    if (
+      kycUploadsRequired &&
+      !hasKycOrSalesFormDoc(documents) &&
+      !hasKycOrSalesFormDoc(existingDocuments)
+    ) {
+      setFormError(KYC_UPLOAD_REQUIRED_MESSAGE)
+      return
+    }
 
     const customerType = (values.customer_type || '').trim()
 
     const payload: CustomerDraftPayload = {
       ...values,
       name: values.name.trim(),
-      email: values.email?.trim() || '',
+      email: '',
       phone: (values.phone || '').trim(),
       nin: values.nin?.trim() || '',
       bvn: values.bvn?.trim() || '',
       address: '',
-      address_house_number: (values.address_house_number || '').trim(),
-      address_building_features: (values.address_building_features || '').trim(),
-      address_street: (values.address_street || '').trim(),
-      address_landmark: (values.address_landmark || '').trim(),
+      address_house_number: '',
+      address_building_features: '',
+      address_street: '',
+      address_landmark: '',
       city: values.city.trim(),
       lga: values.lga?.trim() || '',
       gender: (values.gender || '').trim(),
@@ -526,12 +493,6 @@ export function CustomerForm({
           </div>
 
           <div>
-            <Label htmlFor="email">Email (optional)</Label>
-            <Input id="email" type="email" placeholder="name@company.com" {...register('email')} />
-            {errors.email && <p className="mt-1 text-xs text-destructive">{errors.email.message}</p>}
-          </div>
-
-          <div>
             <Label htmlFor="phone">
               Beneficiary phone{isMinor ? ' (optional)' : ''}
             </Label>
@@ -644,53 +605,6 @@ export function CustomerForm({
                 },
               })}
             />
-          </div>
-
-          <div>
-            <Label htmlFor="address_house_number">House number (optional)</Label>
-            <Input
-              id="address_house_number"
-              placeholder="e.g. 12A"
-              {...register('address_house_number')}
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="address_building_features">Building features</Label>
-            <Input
-              id="address_building_features"
-              placeholder="e.g. White bungalow with blue gate"
-              {...register('address_building_features')}
-            />
-            {errors.address_building_features && (
-              <p className="mt-1 text-xs text-destructive">
-                {errors.address_building_features.message}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <Label htmlFor="address_street">Street</Label>
-            <Input
-              id="address_street"
-              placeholder="e.g. Adeola Odeku Street"
-              {...register('address_street')}
-            />
-            {errors.address_street && (
-              <p className="mt-1 text-xs text-destructive">{errors.address_street.message}</p>
-            )}
-          </div>
-
-          <div>
-            <Label htmlFor="address_landmark">Landmark</Label>
-            <Input
-              id="address_landmark"
-              placeholder="e.g. Near First Bank"
-              {...register('address_landmark')}
-            />
-            {errors.address_landmark && (
-              <p className="mt-1 text-xs text-destructive">{errors.address_landmark.message}</p>
-            )}
           </div>
 
           <div>
@@ -847,9 +761,16 @@ export function CustomerForm({
         </div>
       </Panel>
 
-      <Panel title="Physical forms" description="Upload KYC / sales paperwork (JPG, PNG, PDF)">
+      <Panel
+        title="Physical forms"
+        description={
+          kycUploadsRequired
+            ? 'Required. Upload KYC / sales paperwork (JPG, PNG, PDF)'
+            : 'Optional. Upload KYC / sales paperwork (JPG, PNG, PDF)'
+        }
+      >
         {!isOnline && (
-          <p className="mb-3 rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-100">
+          <p className="mb-3 rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-950">
             Document uploads need a connection. Save the customer draft now and attach files after
             you reconnect.
           </p>
@@ -874,7 +795,22 @@ export function CustomerForm({
             ))}
           </ul>
         )}
-        <DocumentUploader value={documents} onChange={setDocuments} />
+        <DocumentUploader
+          value={documents}
+          onChange={(next) => {
+            setDocuments(next)
+            if (hasKycOrSalesFormDoc(next) || hasKycOrSalesFormDoc(existingDocuments)) {
+              setFormError(null)
+            }
+          }}
+          required={kycUploadsRequired && !hasKycOrSalesFormDoc(existingDocuments)}
+          error={formError === KYC_UPLOAD_REQUIRED_MESSAGE ? formError : null}
+          description={
+            kycUploadsRequired && !hasKycOrSalesFormDoc(existingDocuments)
+              ? 'Required. Take a photo or upload JPG, PNG, or PDF — multiple pages for audit'
+              : 'Optional. Take a photo or upload JPG, PNG, or PDF — multiple pages for audit'
+          }
+        />
       </Panel>
 
       {formError && (

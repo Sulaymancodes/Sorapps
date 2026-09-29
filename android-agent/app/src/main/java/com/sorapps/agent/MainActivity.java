@@ -3,13 +3,18 @@ package com.sorapps.agent;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.media.MediaScannerConnection;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.MediaStore;
 import android.webkit.CookieManager;
 import android.webkit.GeolocationPermissions;
@@ -42,6 +47,7 @@ public class MainActivity extends Activity {
     private WebView webView;
     private ValueCallback<Uri[]> filePathCallback;
     private Uri captureUri;
+    private File captureFile;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -157,14 +163,22 @@ public class MainActivity extends Activity {
         Intent capture = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
         if (capture.resolveActivity(getPackageManager()) != null) {
             try {
-                File photo = createCaptureFile();
-                captureUri = FileProvider.getUriForFile(
-                        this, getPackageName() + ".fileprovider", photo);
+                CaptureTarget target = createGalleryCapture();
+                captureUri = target.uri;
+                captureFile = target.file;
                 capture.putExtra(MediaStore.EXTRA_OUTPUT, captureUri);
-                capture.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                capture.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                for (ResolveInfo info : getPackageManager().queryIntentActivities(capture, PackageManager.MATCH_DEFAULT_ONLY)) {
+                    grantUriPermission(
+                            info.activityInfo.packageName,
+                            captureUri,
+                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    );
+                }
                 chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[] {capture});
             } catch (IOException ignored) {
                 captureUri = null;
+                captureFile = null;
             }
         }
 
@@ -177,13 +191,43 @@ public class MainActivity extends Activity {
         }
     }
 
-    private File createCaptureFile() throws IOException {
-        File dir = new File(getCacheDir(), "capture");
-        if (!dir.exists() && !dir.mkdirs()) {
-            throw new IOException("Could not create capture directory");
+    private static class CaptureTarget {
+        final Uri uri;
+        final File file;
+
+        CaptureTarget(Uri uri, File file) {
+            this.uri = uri;
+            this.file = file;
         }
-        String name = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-        return File.createTempFile("IMG_" + name, ".jpg", dir);
+    }
+
+    private CaptureTarget createGalleryCapture() throws IOException {
+        String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        String dateFolder = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+        String name = "unit_" + stamp + ".jpg";
+        String albumPath = "Sorapps/" + dateFolder;
+
+        if (Build.VERSION.SDK_INT >= 29) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
+            values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+            values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + albumPath);
+            values.put(MediaStore.Images.Media.IS_PENDING, 1);
+            Uri uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) throw new IOException("Could not create gallery photo");
+            return new CaptureTarget(uri, null);
+        }
+
+        File dir = new File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                albumPath
+        );
+        if (!dir.exists() && !dir.mkdirs()) {
+            throw new IOException("Could not create Pictures/" + albumPath);
+        }
+        File photo = new File(dir, name);
+        Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", photo);
+        return new CaptureTarget(uri, photo);
     }
 
     private boolean handleOfflineNavigation(WebView view, Uri uri) {
@@ -280,20 +324,21 @@ public class MainActivity extends Activity {
     }
 
     private void requestRuntimePermissions() {
-        String[] needed = new String[] {
-                Manifest.permission.CAMERA,
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-        };
-        boolean missing = false;
+        java.util.ArrayList<String> needed = new java.util.ArrayList<>();
+        needed.add(Manifest.permission.CAMERA);
+        needed.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        needed.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+        if (Build.VERSION.SDK_INT < 29) {
+            needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+        }
+        java.util.ArrayList<String> missing = new java.util.ArrayList<>();
         for (String permission : needed) {
             if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
-                missing = true;
-                break;
+                missing.add(permission);
             }
         }
-        if (missing) {
-            ActivityCompat.requestPermissions(this, needed, REQUEST_PERMISSIONS);
+        if (!missing.isEmpty()) {
+            ActivityCompat.requestPermissions(this, missing.toArray(new String[0]), REQUEST_PERMISSIONS);
         }
     }
 
@@ -309,10 +354,26 @@ public class MainActivity extends Activity {
             } else if (captureUri != null) {
                 result = new Uri[] {captureUri};
             }
+            if (Build.VERSION.SDK_INT >= 29 && captureUri != null) {
+                ContentValues done = new ContentValues();
+                done.put(MediaStore.Images.Media.IS_PENDING, 0);
+                getContentResolver().update(captureUri, done, null, null);
+            }
+            if (captureFile != null) {
+                MediaScannerConnection.scanFile(
+                        this,
+                        new String[] {captureFile.getAbsolutePath()},
+                        new String[] {"image/jpeg"},
+                        null
+                );
+            }
+        } else if (captureUri != null && Build.VERSION.SDK_INT >= 29) {
+            getContentResolver().delete(captureUri, null, null);
         }
         filePathCallback.onReceiveValue(result);
         filePathCallback = null;
         captureUri = null;
+        captureFile = null;
     }
 
     @Override

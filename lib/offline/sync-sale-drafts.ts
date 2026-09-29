@@ -1,4 +1,4 @@
-import { createSaleAction } from '@/app/actions/sales'
+import { checkSoldSerialsAction, createSaleAction } from '@/app/actions/sales'
 import {
   deleteSaleDraft,
   listSaleDrafts,
@@ -15,6 +15,9 @@ import {
   scanDraftDuplicates,
   serialDuplicates,
 } from '@/lib/offline/check-draft-duplicates'
+import { soldSerialMessage } from '@/lib/utils/serial'
+import { consumeUnlocksLocally } from '@/lib/offline/unlock-pool'
+import { refreshUnlockPoolSnapshot } from '@/lib/offline/sync-unlock-pool'
 
 function emptyReport(partial?: Partial<CustomerDraftSyncReport>): CustomerDraftSyncReport {
   return {
@@ -63,6 +66,17 @@ async function syncOneSaleDraft(draft: SaleDraft) {
   const blockingHit = serialHits[0] || (values.customer_mode === 'new' ? identityHits[0] : undefined)
   if (blockingHit) {
     const message = formatDuplicateMatch(blockingHit)
+    await updateSaleDraft(draft.localId, { status: 'failed', syncError: message })
+    return { ok: false as const, error: message }
+  }
+
+  const sold = await checkSoldSerialsAction(serials)
+  if (!sold.success) {
+    await updateSaleDraft(draft.localId, { status: 'failed', syncError: sold.error })
+    return { ok: false as const, error: sold.error }
+  }
+  if (sold.data.hits[0]) {
+    const message = soldSerialMessage(sold.data.hits[0])
     await updateSaleDraft(draft.localId, { status: 'failed', syncError: message })
     return { ok: false as const, error: message }
   }
@@ -146,6 +160,7 @@ async function syncOneSaleDraft(draft: SaleDraft) {
     },
     site_photo_url: sitePhotoUrl,
     documents: documents.length ? documents : undefined,
+    unlock_pin: values.unlock_pin?.trim() || undefined,
   })
 
   if (!result.success) {
@@ -154,6 +169,12 @@ async function syncOneSaleDraft(draft: SaleDraft) {
   }
 
   await deleteSaleDraft(draft.localId)
+  await consumeUnlocksLocally(serials, {
+    sale_id: result.data.sale.id,
+    customer_id: result.data.sale.customer_id,
+    customer_name: draft.label,
+  })
+  void refreshUnlockPoolSnapshot()
   return { ok: true as const }
 }
 

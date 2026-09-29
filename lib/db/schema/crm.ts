@@ -589,3 +589,11 @@ export const deviceUnlocksRelations = relations(deviceUnlocks, ({ one }) => ({
     references: [warranties.id],
   }),
 }))
+
+/** Singleton org-wide switches (id = 'default') */
+export const orgSettings = pgTable('org_settings', {
+  id: text('id').primaryKey(),
+  kycUploadsRequired: boolean('kyc_uploads_required').notNull().default(false),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  updatedByUserId: text('updated_by_user_id'),
+})

@@ -1,5 +1,6 @@
 import { scanBeneficiaryDuplicatesAction } from '@/app/actions/customers'
 import type { DuplicateMatch, DuplicateScanResult } from '@/lib/services/customers'
+import { parseDeviceSerials } from '@/lib/utils/serial'
 
 const IDENTITY_FIELDS = new Set(['phone', 'nin', 'bvn'])
 
@@ -38,8 +39,5 @@ export async function scanDraftDuplicates(input: {
 export function saleItemSerials(
   items: Array<{ serial_number?: string; quantity?: number }>
 ): string[] {
-  return items
-    .flatMap((item) => (item.serial_number || '').split(/[\s,;]+/))
-    .map((value) => value.trim())
-    .filter(Boolean)
+  return parseDeviceSerials(items.map((item) => item.serial_number || ''))
 }

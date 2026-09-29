@@ -11,6 +11,7 @@ import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
 import { deleteSaleAction } from '@/app/actions/sales'
 import { SaleCreatedModal } from '@/components/sales/SaleCreatedModal'
+import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { useOfflineSyncOptional } from '@/components/offline/offline-sync-context'
 import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import type {
@@ -67,6 +68,7 @@ export default function SalesPage({
   const [expandedSale, setExpandedSale] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [saleToDelete, setSaleToDelete] = useState<Sale | null>(null)
 
   const customers = useMemo(() => {
     const map = new Map<string, Customer>()
@@ -164,17 +166,18 @@ export default function SalesPage({
   }
 
   function handleDelete(sale: Sale) {
-    const customer = customers.get(sale.customer_id)
-    const ok = window.confirm(
-      `Delete ${sale.id}${customer ? ` (${customer.name})` : ''}?\n\nThis restores product stock, removes the invoice/schedule/warranties, and cannot be undone.`
-    )
-    if (!ok) return
-
     setActionError(null)
+    setSaleToDelete(sale)
+  }
+
+  function confirmDelete() {
+    const sale = saleToDelete
+    if (!sale) return
     setDeletingId(sale.id)
     startTransition(async () => {
       const result = await deleteSaleAction(sale.id)
       setDeletingId(null)
+      setSaleToDelete(null)
       if (!result.success) {
         setActionError(result.error)
         return
@@ -492,7 +495,7 @@ export default function SalesPage({
                           <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
                             <div className="space-y-3">
                               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                Site photo
+                                Unit photo
                               </p>
                               {sale.site_photo_url ? (
                                 <a
@@ -504,7 +507,7 @@ export default function SalesPage({
                                   {/* eslint-disable-next-line @next/next/no-img-element */}
                                   <img
                                     src={sale.site_photo_url}
-                                    alt={`Site photo for ${sale.id}`}
+                                    alt={`Unit photo for ${sale.id}`}
                                     className="max-h-64 w-full object-cover"
                                   />
                                   <p className="px-3 py-2 text-[11px] text-muted-foreground">
@@ -513,7 +516,7 @@ export default function SalesPage({
                                 </a>
                               ) : (
                                 <p className="rounded-xl border border-dashed border-border/70 px-3 py-8 text-center text-sm text-muted-foreground">
-                                  No site photo attached
+                                  No unit photo attached
                                 </p>
                               )}
 
@@ -625,6 +628,24 @@ export default function SalesPage({
           </div>
         )}
       </Panel>
+      <ConfirmModal
+        open={Boolean(saleToDelete)}
+        title={
+          saleToDelete
+            ? `Delete ${saleToDelete.id}${
+                customers.get(saleToDelete.customer_id)
+                  ? ` (${customers.get(saleToDelete.customer_id)?.name})`
+                  : ''
+              }?`
+            : 'Delete sale'
+        }
+        description="This restores product stock and removes the invoice, payment schedule, and warranties. This cannot be undone."
+        pending={Boolean(deletingId)}
+        onCancel={() => {
+          if (!deletingId) setSaleToDelete(null)
+        }}
+        onConfirm={confirmDelete}
+      />
     </PageShell>
   )
 }

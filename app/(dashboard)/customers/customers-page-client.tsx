@@ -11,6 +11,7 @@ import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
 import { useOfflineSyncOptional } from '@/components/offline/offline-sync-context'
 import { deleteCustomerAction } from '@/app/actions/customers'
+import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { NIGERIAN_STATES } from '@/lib/constants/options'
 import { formatCurrency, formatPhone } from '@/lib/utils/formatting'
 import type { Customer } from '@/lib/types/crm'
@@ -30,6 +31,7 @@ export function CustomersPageClient({
   const [selectedBusinessType, setSelectedBusinessType] = useState('')
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null)
   const [pending, startTransition] = useTransition()
 
   const states = useMemo(() => {
@@ -82,16 +84,18 @@ export function CustomersPageClient({
   }, [customers, search, selectedState, selectedBusinessType])
 
   function handleDelete(customer: Customer) {
-    const ok = window.confirm(
-      `Delete ${customer.name}? This cannot be undone.\n\nCustomers with existing sales cannot be deleted.`
-    )
-    if (!ok) return
-
     setActionError(null)
+    setCustomerToDelete(customer)
+  }
+
+  function confirmDelete() {
+    const customer = customerToDelete
+    if (!customer) return
     setDeletingId(customer.id)
     startTransition(async () => {
       const result = await deleteCustomerAction(customer.id)
       setDeletingId(null)
+      setCustomerToDelete(null)
       if (!result.success) {
         setActionError(result.error)
         return
@@ -324,6 +328,16 @@ export function CustomersPageClient({
           </div>
         )}
       </Panel>
+      <ConfirmModal
+        open={Boolean(customerToDelete)}
+        title={customerToDelete ? `Delete ${customerToDelete.name}?` : 'Delete customer'}
+        description="This cannot be undone. Customers with existing sales cannot be deleted."
+        pending={Boolean(deletingId)}
+        onCancel={() => {
+          if (!deletingId) setCustomerToDelete(null)
+        }}
+        onConfirm={confirmDelete}
+      />
     </PageShell>
   )
 }

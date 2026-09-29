@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Panel } from '@/components/common/Panel'
 import { getR2StatusAction } from '@/app/actions/uploads'
 import { evaluateDeploymentArea, formatGpsCoord } from '@/lib/utils/gps'
+import { savePhotoOnThisPhone } from '@/lib/offline/save-phone-photo'
 import { SUBSIDY_LABELS, type SubsidyLevel } from '@/lib/constants/deployment-areas'
 import { cn } from '@/lib/utils'
 import type { SaleSiteGpsInput } from '@/lib/types/crm'
@@ -175,7 +176,7 @@ export function SiteVerificationPanel({
 
     try {
       if (!file.type.startsWith('image/')) {
-        setLocalError('Choose an image file for the site photo')
+        setLocalError('Choose an image file for the unit photo')
         return
       }
 
@@ -186,12 +187,14 @@ export function SiteVerificationPanel({
         locked: true,
       })
       onPhotoChange(file)
-      setStatus(null)
+      setStatus('Saving a copy on this phone…')
+      await savePhotoOnThisPhone(file)
+      setStatus('Copy saved on this phone')
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Photo + GPS capture failed')
+      setStatus(null)
     } finally {
       setBusy(false)
-      setStatus(null)
       if (fileRef.current) fileRef.current.value = ''
     }
   }
@@ -218,16 +221,17 @@ export function SiteVerificationPanel({
 
   return (
     <Panel
-      title="Site GPS & photo"
-      description="Photo stays on this form until you submit — then it uploads. Offline, it is stored in the sale draft with GPS."
+      title="Unit GPS & photo"
+      description="Photo stays on this form until you submit — then it uploads. A copy is also saved on this phone. Offline, it is stored in the sale draft with GPS."
     >
       <div className="space-y-5">
         <div className="rounded-xl border border-border/70 bg-secondary/15 p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <Label>Site photo + GPS</Label>
+              <Label>Unit photo + GPS</Label>
               <p className="text-xs text-muted-foreground">
-                Attach photo now; GPS locks with it. Upload runs only when you create the sale.
+                Attach photo now; GPS locks with it. A copy stays on this phone. Upload runs only
+                when you create the sale.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -299,12 +303,12 @@ export function SiteVerificationPanel({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={previewUrl}
-                alt="Site capture preview"
+                alt="Unit capture preview"
                 className="max-h-56 w-full object-cover"
               />
               <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <p className="truncate text-[11px] text-muted-foreground">
-                  Attached: {photoFile?.name || 'site photo'} (not uploaded yet)
+                  Attached: {photoFile?.name || 'unit photo'} (copy saved on this phone)
                 </p>
                 <Button
                   type="button"
@@ -320,7 +324,7 @@ export function SiteVerificationPanel({
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Stand at the installation site, then take the photo — GPS locks automatically.
+              Stand at the unit, then take the photo — GPS locks automatically.
             </p>
           )}
         </div>
@@ -381,7 +385,7 @@ export function SiteVerificationPanel({
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              GPS appears here after you take the site photo.
+              GPS appears here after you take the unit photo.
             </p>
           )}
         </div>

@@ -9,6 +9,7 @@ import {
   scoreSoftDuplicate,
 } from '@/lib/utils/duplicate-match'
 import { composeDaresAddress } from '@/lib/constants/dares'
+import { parseDeviceSerials, serialLookupKey } from '@/lib/utils/serial'
 
 function digitsOnly(value: string) {
   return value.replace(/\D/g, '')
@@ -44,13 +45,6 @@ function assertContactRules(input: CustomerInput) {
   if (!(input.gender || '').trim()) throw new Error('Select gender of primary account holder')
   if (!(input.customer_category || '').trim()) throw new Error('Select customer category')
   if (!(input.customer_type || '').trim()) throw new Error('Select customer type')
-
-  const building = (input.address_building_features || '').trim()
-  const street = (input.address_street || '').trim()
-  const landmark = (input.address_landmark || '').trim()
-  if (!building) throw new Error('Enter distinct building features (required for DARES address)')
-  if (!street) throw new Error('Enter street name or identifying features')
-  if (!landmark) throw new Error('Enter nearest landmark')
 
   if (isMinor) {
     if (!guardianName) throw new Error('Enter the parent/guardian name for a minor beneficiary')
@@ -196,12 +190,7 @@ function toMatch(c: Customer, extra?: Partial<DuplicateMatch>): DuplicateMatch {
 }
 
 function parseSerials(serial?: string | string[]): string[] {
-  if (!serial) return []
-  const raw = Array.isArray(serial) ? serial.join(',') : serial
-  return raw
-    .split(/[\s,;]+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
+  return parseDeviceSerials(serial)
 }
 
 /**
@@ -222,7 +211,7 @@ export async function scanBeneficiaryDuplicates(
   const nin = input.nin?.trim() ? normalizeNin(input.nin) : ''
   const bvn = input.bvn?.trim() ? normalizeBvn(input.bvn) : ''
   const beneficiaryId = input.beneficiary_id?.trim() || ''
-  const serials = parseSerials(input.serial).map((s) => s.toLowerCase())
+  const serials = parseSerials(input.serial).map(serialLookupKey)
 
   const hardById = new Map<string, DuplicateMatch>()
   const softById = new Map<string, DuplicateMatch>()
@@ -249,7 +238,7 @@ export async function scanBeneficiaryDuplicates(
     }
     const list = byField.get(field) || []
     if (!list.some((m) => m.id === c.id)) {
-      list.push(toMatch(c, { severity: 'hard', reasons: [reason], score: 100 }))
+      list.push(toMatch(c, { severity: 'hard', reasons: [reason], score: 100, matched_fields: [field] }))
       byField.set(field, list)
     }
   }
@@ -298,10 +287,25 @@ export async function scanBeneficiaryDuplicates(
       .from(warranties)
     const customerById = new Map(candidates.map((c) => [c.id, c]))
     for (const w of warrantyRows) {
-      const serial = (w.serialNumber || '').trim().toLowerCase()
+      const serial = serialLookupKey(w.serialNumber || '')
       if (!serial || !serials.includes(serial)) continue
       const c = customerById.get(w.customerId)
-      if (c) pushHard('serial', c, `Device serial already registered (${w.serialNumber})`)
+      if (c) {
+        pushHard('serial', c, `Device serial already registered (${w.serialNumber})`)
+      } else {
+        const placeholder: Customer = {
+          id: w.customerId || 'unknown',
+          name: 'another customer',
+          email: '',
+          phone: '',
+          nin: '',
+          bvn: '',
+          address: '',
+          city: '',
+          state: '',
+        } as Customer
+        pushHard('serial', placeholder, `Device serial already registered (${w.serialNumber})`)
+      }
     }
   }
 

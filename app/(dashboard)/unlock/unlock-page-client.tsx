@@ -10,10 +10,12 @@ import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
-import { unlockDeviceAction } from '@/app/actions/unlocks'
+import { resolveUnlockPinAction } from '@/app/actions/unlocks'
+import { refreshUnlockPoolSnapshot } from '@/lib/offline/sync-unlock-pool'
 import { toDateInputValue, todayInLagos } from '@/lib/paygo/schedule'
 import { downloadExcelTable, downloadPdfTable } from '@/lib/utils/export'
 import { formatDateTime } from '@/lib/utils/formatting'
+import { sameSerialKey } from '@/lib/utils/serial'
 import { cn } from '@/lib/utils'
 
 const PARTIAL_DAYS = [7, 30, 60, 90, 180, 360] as const
@@ -25,7 +27,12 @@ type UnlockRow = {
   day_token: string
   pin: string
   source: 'unlock' | 'activation'
+  sale_id?: string
   created_at: string
+}
+
+function statusLabel(row: Pick<UnlockRow, 'sale_id'>) {
+  return row.sale_id ? 'Sold' : 'Available'
 }
 
 function typeLabel(row: Pick<UnlockRow, 'kind' | 'day_token'>) {
@@ -51,6 +58,7 @@ function exportRows(rows: UnlockRow[]) {
     row.serial_number,
     typeLabel(row),
     sourceLabel(row.source),
+    statusLabel(row),
     row.pin,
   ])
 }
@@ -79,14 +87,11 @@ export function UnlockPageClient({
   const [dateTo, setDateTo] = useState('')
 
   const displayed = useMemo(() => {
-    const sn = serial.trim().toLowerCase()
-    if (sn) {
-      const match = [latest, ...rows].find(
-        (row) => row && row.serial_number.trim().toLowerCase() === sn
-      )
-      return match ?? null
-    }
-    return latest ?? rows[0] ?? null
+    const sn = serial.trim()
+    if (!sn) return null
+    return (
+      [latest, ...rows].find((row) => row && sameSerialKey(row.serial_number, sn)) ?? null
+    )
   }, [serial, latest, rows])
 
   const filteredRows = useMemo(() => {
@@ -106,6 +111,7 @@ export function UnlockPageClient({
         typeLabel(row),
         row.day_token,
         sourceLabel(row.source),
+        statusLabel(row),
       ].some((value) => String(value || '').toLowerCase().includes(q))
     })
   }, [rows, search, dateFrom, dateTo])
@@ -120,7 +126,7 @@ export function UnlockPageClient({
   function runUnlock(kind: 'partial' | 'full') {
     setError(null)
     startTransition(async () => {
-      const result = await unlockDeviceAction({
+      const result = await resolveUnlockPinAction({
         serial_number: serial,
         kind,
         validity_days: kind === 'partial' ? days : undefined,
@@ -136,6 +142,7 @@ export function UnlockPageClient({
         day_token: result.data.day_token,
         pin: result.data.pin,
         source: result.data.source ?? 'unlock',
+        sale_id: result.data.sale_id || '',
         created_at:
           typeof result.data.created_at === 'string'
             ? result.data.created_at
@@ -143,6 +150,7 @@ export function UnlockPageClient({
       }
       setLatest(row)
       setRows((current) => [row, ...current.filter((item) => item.id !== row.id)])
+      void refreshUnlockPoolSnapshot()
     })
   }
 
@@ -150,7 +158,7 @@ export function UnlockPageClient({
     downloadExcelTable(
       exportFilename(dateFrom, dateTo, 'xls'),
       'Device PINs',
-      ['When', 'Serial', 'Type', 'Source', 'PIN'],
+      ['When', 'Serial', 'Type', 'Source', 'Status', 'PIN'],
       exportRows(filteredRows)
     )
   }
@@ -160,7 +168,7 @@ export function UnlockPageClient({
       exportFilename(dateFrom, dateTo, 'pdf'),
       'Sorapps device PINs',
       `${filteredRows.length} PIN${filteredRows.length === 1 ? '' : 's'} · ${rangeLabel}`,
-      ['When', 'Serial', 'Type', 'Source', 'PIN'],
+      ['When', 'Serial', 'Type', 'Source', 'Status', 'PIN'],
       exportRows(filteredRows)
     )
   }
@@ -169,26 +177,13 @@ export function UnlockPageClient({
     <PageShell>
       <PageHeader
         title="Unlock"
-        description="Enter a serial number to unlock a unit. Partial uses a time PIN. Full unlocks the device permanently."
+        description="Enter a serial to get a device PIN. Unused PINs are shared with every agent until that unit is sold."
       />
 
       {!beebeeConfigured && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           BeeBeeJump is not configured. Set the live API keys before unlocking a unit.
         </div>
-      )}
-
-      {displayed && (
-        <Panel title="Device PIN">
-          <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-4">
-            <p className="text-sm text-muted-foreground">
-              {sourceLabel(displayed.source)} · {typeLabel(displayed)} · {displayed.serial_number}
-            </p>
-            <p className="mt-2 break-all font-mono text-3xl font-semibold tracking-[0.18em] text-primary">
-              {displayed.pin}
-            </p>
-          </div>
-        </Panel>
       )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,420px)_1fr]">
@@ -246,10 +241,22 @@ export function UnlockPageClient({
                 {pending ? 'Unlocking…' : 'Full unlock'}
               </Button>
             </div>
+
+            {displayed ? (
+              <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-4">
+                <p className="text-sm text-muted-foreground">
+                  PIN for {displayed.serial_number} · {typeLabel(displayed)}
+                  {displayed.sale_id ? ' · Sold' : ' · Available'}
+                </p>
+                <p className="mt-2 break-all font-mono text-3xl font-semibold tracking-[0.18em] text-primary">
+                  {displayed.pin}
+                </p>
+              </div>
+            ) : null}
           </div>
         </Panel>
 
-        <Panel title="Your PIN history" description="Activation and unlock PINs from this account" padded={false}>
+        <Panel title="Shared PIN pool" description="All agents see unused and sold PINs. Unused PINs download to this phone while you are online." padded={false}>
           {rows.length > 0 && (
             <div className="space-y-3 border-b border-border/70 px-4 py-3">
               <SearchField
@@ -334,7 +341,8 @@ export function UnlockPageClient({
               <KeyRound className="mx-auto mb-3 size-10 text-muted-foreground" />
               <p className="font-medium">No PINs yet</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Create a sale or unlock a serial to see the device PIN here.
+                Unlock a serial to add it to the shared pool. Every agent can use unused PINs until
+                a sale consumes them.
               </p>
             </div>
           ) : filteredRows.length === 0 ? (
@@ -349,7 +357,7 @@ export function UnlockPageClient({
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-border/70 bg-secondary/40">
-                    {['When', 'Serial', 'Type', 'Source', 'PIN'].map((heading) => (
+                    {['When', 'Serial', 'Type', 'Source', 'Status', 'PIN'].map((heading) => (
                       <th
                         key={heading}
                         className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
@@ -368,6 +376,15 @@ export function UnlockPageClient({
                       <td className="px-4 py-3 font-mono text-sm">{row.serial_number}</td>
                       <td className="px-4 py-3 text-sm">{typeLabel(row)}</td>
                       <td className="px-4 py-3 text-sm">{sourceLabel(row.source)}</td>
+                      <td className="px-4 py-3 text-sm">
+                        {row.sale_id ? (
+                          <span className="text-muted-foreground">Sold</span>
+                        ) : (
+                          <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                            Available
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 font-mono text-sm font-semibold tracking-wide">
                         {row.pin}
                       </td>

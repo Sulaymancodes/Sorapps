@@ -6,4 +6,7 @@
     <cache-path
         name="capture"
         path="capture/" />
+    <external-path
+        name="pictures"
+        path="Pictures" />
 </paths>

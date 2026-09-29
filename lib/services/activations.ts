@@ -49,6 +49,7 @@ export type SendActivationInput = {
   payment_id?: string
   created_by_user_id?: string
   forever?: boolean
+  existing_pin?: string
 }
 
 function mapRow(
@@ -188,11 +189,18 @@ export async function sendActivationSms(
   }
 
   const beebeeDay = toBeebeeDayToken(validityDays, forever)
-  const beebee = await fetchBeebeeActivation({
-    sn: deviceSerial,
-    day: beebeeDay,
-  })
-  const code = beebee.pin
+  const reusedPin = input.existing_pin?.trim()
+  let code = reusedPin || ''
+  let beebeeRaw: unknown = { reused: true, day: beebeeDay }
+
+  if (!reusedPin) {
+    const beebee = await fetchBeebeeActivation({
+      sn: deviceSerial,
+      day: beebeeDay,
+    })
+    code = beebee.pin
+    beebeeRaw = beebee.raw
+  }
   if (forever) validityDays = Math.max(validityDays, 3650)
 
   const messageBody = buildActivationSmsBody({
@@ -233,7 +241,7 @@ export async function sendActivationSms(
       isPartial,
       expiresAt,
       createdByUserId: input.created_by_user_id || null,
-      providerResponse: JSON.stringify({ beebee: beebee.raw, day: beebeeDay }),
+      providerResponse: JSON.stringify({ beebee: beebeeRaw, day: beebeeDay, reused: Boolean(reusedPin) }),
     })
     .returning()
 
@@ -309,6 +317,7 @@ export async function issueActivationForSale(input: {
   payment_type?: string
   phone?: string
   created_by_user_id?: string
+  existing_pin?: string
 }): Promise<{ activation: ActivationRecord }> {
   const warrantyRows = await db
     .select()
@@ -330,5 +339,6 @@ export async function issueActivationForSale(input: {
     expected_amount: input.expected_amount,
     forever: input.payment_type === 'full',
     created_by_user_id: input.created_by_user_id,
+    existing_pin: input.existing_pin,
   })
 }

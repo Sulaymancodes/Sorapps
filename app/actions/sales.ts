@@ -4,9 +4,13 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { getSessionAccess, requireAdmin, requireSession } from '@/lib/auth-server'
 import { createCustomerDocuments } from '@/lib/services/documents'
+import { assertKycUploadsIfRequired } from '@/lib/services/org-settings'
 import { getCustomer } from '@/lib/services/customers'
 import { issueActivationForSale } from '@/lib/services/activations'
 import { createSale, deleteSale, getSaleUnlockPin } from '@/lib/services/sales'
+import { assertSerialsNotSold, findSoldSerials } from '@/lib/services/serials'
+import { attachUnlockPinToSale } from '@/lib/services/unlocks'
+import { parseDeviceSerials, type SoldSerialHit } from '@/lib/utils/serial'
 import { assertAgentTerritory } from '@/lib/utils/territory'
 import type { DocumentUploadInput, Invoice, PaymentSchedule, Sale } from '@/lib/types/crm'
 
@@ -19,9 +23,9 @@ const customerInputSchema = z
     bvn: z.string().optional(),
     address: z.string().optional().default(''),
     address_house_number: z.string().optional().default(''),
-    address_building_features: z.string().min(1, 'Building features required'),
-    address_street: z.string().min(1, 'Street / identifying features required'),
-    address_landmark: z.string().min(1, 'Nearest landmark required'),
+    address_building_features: z.string().optional().default(''),
+    address_street: z.string().optional().default(''),
+    address_landmark: z.string().optional().default(''),
     city: z.string().min(1),
     state: z.string().min(1),
     lga: z.string().optional(),
@@ -110,8 +114,9 @@ const saleSchema = z
       subsidy_level: z.string().nullable().optional(),
       out_of_area_reason: z.string().nullable().optional(),
     }),
-    site_photo_url: z.string().url('Upload a site photo'),
+    site_photo_url: z.string().url('Upload a unit photo'),
     documents: z.array(documentSchema).optional(),
+    unlock_pin: z.string().trim().min(1).optional(),
   })
   .refine((data) => Boolean(data.customer_id?.trim() || data.new_customer), {
     message: 'Select or create a customer',
@@ -162,6 +167,14 @@ export async function createSaleAction(
       assertAgentTerritory({ state: existing.state, lga: existing.lga }, access)
     }
 
+    const serials = parsed.data.items.flatMap((item) =>
+      parseDeviceSerials(item.serial_number)
+    )
+    await assertSerialsNotSold(serials)
+    await assertKycUploadsIfRequired(parsed.data.documents, {
+      customerId: parsed.data.customer_id?.trim() || undefined,
+    })
+
     const { documents, ...saleData } = parsed.data
     const result = await createSale({
       ...saleData,
@@ -190,6 +203,14 @@ export async function createSaleAction(
     let activationWarning: string | undefined
     let unlockPin: string | undefined
     const paidAtSale = result.sale.amount_paid
+    const preparedPin = parsed.data.unlock_pin?.trim()
+    const firstSerial = parsed.data.items[0]?.serial_number
+
+    if (preparedPin) {
+      await attachUnlockPinToSale(result.sale.id, firstSerial || '', preparedPin)
+      unlockPin = preparedPin
+    }
+
     if (paidAtSale > 0) {
       try {
         const firstInstallment = result.schedule.installments[0]
@@ -203,6 +224,7 @@ export async function createSaleAction(
               : firstInstallment?.amount || result.sale.total_amount,
           payment_type: result.sale.payment_type,
           created_by_user_id: session.user.id,
+          existing_pin: preparedPin,
         })
         activationId = activation.id
         unlockPin = activation.code
@@ -211,7 +233,7 @@ export async function createSaleAction(
           error instanceof Error
             ? error.message
             : 'Sale saved, but the device PIN SMS could not be sent'
-        unlockPin = (await getSaleUnlockPin(result.sale.id)) || undefined
+        unlockPin = preparedPin || (await getSaleUnlockPin(result.sale.id)) || undefined
       }
     }
 
@@ -238,6 +260,21 @@ export async function createSaleAction(
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to create sale',
+    }
+  }
+}
+
+export async function checkSoldSerialsAction(
+  serials: string[]
+): Promise<ActionResult<{ hits: SoldSerialHit[] }>> {
+  await requireSession()
+  try {
+    const hits = await findSoldSerials(serials)
+    return { success: true, data: { hits } }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to check serials',
     }
   }
 }

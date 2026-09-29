@@ -170,7 +170,12 @@ async function cacheAppShell(urls: string[]) {
 self.addEventListener('message', (event) => {
   const data = event.data as { type?: string; urls?: string[] } | undefined
   if (data?.type !== 'CACHE_APP_SHELL' || !Array.isArray(data.urls)) return
-  event.waitUntil(cacheAppShell(data.urls))
+  const port = 'ports' in event ? event.ports[0] : undefined
+  event.waitUntil(
+    cacheAppShell(data.urls).finally(() => {
+      port?.postMessage({ type: 'CACHE_APP_SHELL_DONE' })
+    })
+  )
 })
 
 serwist.addEventListeners()
