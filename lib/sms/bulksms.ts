@@ -110,6 +110,21 @@ export async function sendBulkSms(input: SmsSendInput): Promise<SmsSendResult> {
   }
 }
 
+/** Break digit runs so Nigerian operators do not treat the PIN as a phone number. */
+export function formatPinForSms(pin: string) {
+  const digits = pin.replace(/\D/g, '')
+  if (!digits) return pin.trim()
+  if (digits.length < 8) return digits
+
+  const chunks: string[] = []
+  for (let i = 0; i < digits.length; i += 3) {
+    chunks.push(digits.slice(i, i + 3))
+  }
+  return chunks
+    .map((chunk, index) => (index === 0 ? chunk : index % 2 === 1 ? `_${chunk}` : `-${chunk}`))
+    .join('')
+}
+
 export function buildActivationSmsBody(params: {
   customerName: string
   code: string
@@ -119,6 +134,7 @@ export function buildActivationSmsBody(params: {
   isPartial?: boolean
   forever?: boolean
 }) {
+  const pin = formatPinForSms(params.code)
   const serialLine = params.deviceSerial ? ` Device: ${params.deviceSerial}.` : ''
   const validityLine = params.forever
     ? ' Permanent unlock.'
@@ -127,7 +143,7 @@ export function buildActivationSmsBody(params: {
       : ''
   const partialLine = params.isPartial ? ' Partial payment applied.' : ''
 
-  return `Sorapps: Hello ${params.customerName}, your device PIN is ${params.code}.${serialLine}${validityLine}${partialLine} Keep this PIN safe.`
+  return `Sorapps: Hello ${params.customerName}, your device PIN is ${pin}.${serialLine}${validityLine}${partialLine} Keep this PIN safe.`
 }
 
 export function buildPaygoReminderSmsBody(params: {
