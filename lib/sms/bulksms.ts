@@ -110,7 +110,7 @@ export async function sendBulkSms(input: SmsSendInput): Promise<SmsSendResult> {
   }
 }
 
-/** Break digit runs so Nigerian operators do not treat the PIN as a phone number. */
+/** Break digit runs so operators do not treat the PIN as a phone number. Use hyphens only: underscore becomes § on the international route. */
 export function formatPinForSms(pin: string) {
   const digits = pin.replace(/\D/g, '')
   if (!digits) return pin.trim()
@@ -120,9 +120,7 @@ export function formatPinForSms(pin: string) {
   for (let i = 0; i < digits.length; i += 3) {
     chunks.push(digits.slice(i, i + 3))
   }
-  return chunks
-    .map((chunk, index) => (index === 0 ? chunk : index % 2 === 1 ? `_${chunk}` : `-${chunk}`))
-    .join('')
+  return chunks.join('-')
 }
 
 export function buildActivationSmsBody(params: {
