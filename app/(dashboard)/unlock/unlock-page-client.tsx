@@ -1,7 +1,7 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
-import { FileSpreadsheet, FileText, KeyRound } from 'lucide-react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
+import { ChevronLeft, ChevronRight, FileSpreadsheet, FileText, KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,6 +19,7 @@ import { sameSerialKey } from '@/lib/utils/serial'
 import { cn } from '@/lib/utils'
 
 const PARTIAL_DAYS = [7, 30, 60, 90, 180, 360] as const
+const PAGE_SIZE = 25
 
 type UnlockRow = {
   id: string
@@ -85,6 +86,7 @@ export function UnlockPageClient({
   const [search, setSearch] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [page, setPage] = useState(1)
 
   const displayed = useMemo(() => {
     const sn = serial.trim()
@@ -115,6 +117,14 @@ export function UnlockPageClient({
       ].some((value) => String(value || '').toLowerCase().includes(q))
     })
   }, [rows, search, dateFrom, dateTo])
+
+  useEffect(() => {
+    setPage(1)
+  }, [search, dateFrom, dateTo])
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const pagedRows = filteredRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   const rangeLabel = useMemo(() => {
     if (dateFrom && dateTo) return `${dateFrom} to ${dateTo}`
@@ -150,6 +160,7 @@ export function UnlockPageClient({
       }
       setLatest(row)
       setRows((current) => [row, ...current.filter((item) => item.id !== row.id)])
+      setPage(1)
       void refreshUnlockPoolSnapshot()
     })
   }
@@ -308,6 +319,7 @@ export function UnlockPageClient({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
                   {filteredRows.length} PIN{filteredRows.length === 1 ? '' : 's'} · {rangeLabel}
+                  {totalPages > 1 ? ` · page ${currentPage} of ${totalPages}` : ''}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Button
@@ -353,6 +365,7 @@ export function UnlockPageClient({
               </p>
             </div>
           ) : (
+            <>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -368,7 +381,7 @@ export function UnlockPageClient({
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.map((row) => (
+                  {pagedRows.map((row) => (
                     <tr key={row.id} className="border-b border-border/60 last:border-0">
                       <td className="px-4 py-3 text-sm text-muted-foreground">
                         {formatDateTime(new Date(row.created_at))}
@@ -393,6 +406,38 @@ export function UnlockPageClient({
                 </tbody>
               </table>
             </div>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between gap-3 border-t border-border/60 px-3 py-2.5">
+                <p className="text-xs text-muted-foreground">
+                  {(currentPage - 1) * PAGE_SIZE + 1}–
+                  {Math.min(currentPage * PAGE_SIZE, filteredRows.length)} of{' '}
+                  {filteredRows.length.toLocaleString()}
+                </p>
+                <div className="flex gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1"
+                    disabled={currentPage <= 1}
+                    onClick={() => setPage(currentPage - 1)}
+                  >
+                    <ChevronLeft className="size-3.5" />
+                    Prev
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1"
+                    disabled={currentPage >= totalPages}
+                    onClick={() => setPage(currentPage + 1)}
+                  >
+                    Next
+                    <ChevronRight className="size-3.5" />
+                  </Button>
+                </div>
+              </div>
+            )}
+            </>
           )}
         </Panel>
       </div>

@@ -83,7 +83,7 @@ import type {
   SaleSiteGpsInput,
 } from '@/lib/types/crm'
 
-type DuplicateField = 'phone' | 'nin' | 'bvn'
+type DuplicateField = 'phone' | 'nin'
 type DuplicateMatch = {
   id: string
   name: string
@@ -94,9 +94,8 @@ type DuplicateMatch = {
   state: string
 }
 
-/** NIN (NIMC) and BVN (CBN/NIBSS) are both 11 digits. */
+/** NIN (NIMC) is 11 digits. */
 const NIN_DIGITS = 11
-const BVN_DIGITS = 11
 /** Local Nigerian mobile: 0 + 10 digits. International: 234 + 10 digits. */
 const PHONE_LOCAL_DIGITS = 11
 const PHONE_INTL_DIGITS = 13
@@ -119,7 +118,6 @@ function digitsOnly(value: string) {
 
 function maxDigitsForField(field: DuplicateField, digits: string): number {
   if (field === 'nin') return NIN_DIGITS
-  if (field === 'bvn') return BVN_DIGITS
   if (digits.startsWith('234')) return PHONE_INTL_DIGITS
   return PHONE_LOCAL_DIGITS
 }
@@ -135,19 +133,16 @@ function isCompletePhone(value: string) {
 function isCompleteUniqueValue(field: DuplicateField, value: string) {
   const digits = digitsOnly(value)
   if (field === 'nin') return digits.length === NIN_DIGITS
-  if (field === 'bvn') return digits.length === BVN_DIGITS
   return isCompletePhone(value)
 }
 
 function uniqueFieldHint(field: DuplicateField) {
   if (field === 'nin') return `Exactly ${NIN_DIGITS} digits — search runs when complete`
-  if (field === 'bvn') return `Exactly ${BVN_DIGITS} digits — search runs when complete`
   return `Exactly ${PHONE_LOCAL_DIGITS} digits (e.g. 0701xxxxxxx) — search runs when complete`
 }
 
 function uniqueFieldIncompleteMessage(field: DuplicateField) {
   if (field === 'nin') return `NIN must be exactly ${NIN_DIGITS} digits`
-  if (field === 'bvn') return `BVN must be exactly ${BVN_DIGITS} digits`
   return `Phone must be exactly ${PHONE_LOCAL_DIGITS} digits starting with 0`
 }
 
@@ -389,7 +384,6 @@ export function SaleForm({
   const [siteError, setSiteError] = useState<string | null>(null)
   const [dupPhone, setDupPhone] = useState<FieldDupState>(emptyDup)
   const [dupNin, setDupNin] = useState<FieldDupState>(emptyDup)
-  const [dupBvn, setDupBvn] = useState<FieldDupState>(emptyDup)
   const [softMatches, setSoftMatches] = useState<SoftDuplicateMatch[]>([])
   const [softAcknowledged, setSoftAcknowledged] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -537,8 +531,7 @@ export function SaleForm({
     return NIGERIAN_STATES as unknown as string[]
   }, [selectedState])
 
-  const hasDuplicates =
-    dupPhone.matches.length > 0 || dupNin.matches.length > 0 || dupBvn.matches.length > 0
+  const hasDuplicates = dupPhone.matches.length > 0 || dupNin.matches.length > 0
 
   const totals = useMemo(() => {
     const subtotal = (watchedItems || []).reduce((sum, line) => {
@@ -654,8 +647,7 @@ export function SaleForm({
       const values = getValues('new_customer')
       const raw = values[field]?.trim() || ''
       const value = field === 'phone' ? raw : digitsOnly(raw)
-      const setDup =
-        field === 'phone' ? setDupPhone : field === 'nin' ? setDupNin : setDupBvn
+      const setDup = field === 'phone' ? setDupPhone : setDupNin
 
       if (!isCompleteUniqueValue(field, value)) {
         setDup(emptyDup())
@@ -669,7 +661,6 @@ export function SaleForm({
       const result = await checkCustomerDuplicateAction({
         phone: field === 'phone' ? value : undefined,
         nin: field === 'nin' ? value : undefined,
-        bvn: field === 'bvn' ? value : undefined,
       })
 
       if (!result.success) {
@@ -694,13 +685,11 @@ export function SaleForm({
   const clearFieldDup = (field: DuplicateField) => {
     if (field === 'phone') setDupPhone(emptyDup())
     if (field === 'nin') setDupNin(emptyDup())
-    if (field === 'bvn') setDupBvn(emptyDup())
     clearFieldError(field)
   }
 
   const phoneValue = useWatch({ control, name: 'new_customer.phone' }) || ''
   const ninValue = useWatch({ control, name: 'new_customer.nin' }) || ''
-  const bvnValue = useWatch({ control, name: 'new_customer.bvn' }) || ''
   const customerNameValue = useWatch({ control, name: 'new_customer.name' }) || ''
   const customerCityValue = useWatch({ control, name: 'new_customer.city' }) || ''
   const isMinor = useWatch({ control, name: 'new_customer.is_minor' })
@@ -731,18 +720,6 @@ export function SaleForm({
   }, [ninValue, customerMode, runDuplicateCheck])
 
   useEffect(() => {
-    if (customerMode !== 'new') return
-    const timer = window.setTimeout(() => {
-      if (isCompleteUniqueValue('bvn', bvnValue)) {
-        void runDuplicateCheck('bvn', { silentIncomplete: true })
-      } else {
-        setDupBvn(emptyDup())
-      }
-    }, UNIQUE_CHECK_DEBOUNCE_MS)
-    return () => window.clearTimeout(timer)
-  }, [bvnValue, customerMode, runDuplicateCheck])
-
-  useEffect(() => {
     if (customerMode !== 'new') {
       setSoftMatches([])
       setSoftAcknowledged(false)
@@ -766,7 +743,6 @@ export function SaleForm({
           name,
           phone: phoneValue || guardianPhoneValue || undefined,
           nin: ninValue || undefined,
-          bvn: bvnValue || undefined,
           city: customerCityValue || undefined,
           state: selectedState || undefined,
           lga: selectedLga || undefined,
@@ -787,7 +763,6 @@ export function SaleForm({
     phoneValue,
     guardianPhoneValue,
     ninValue,
-    bvnValue,
     watchedItems,
   ])
 
@@ -997,7 +972,6 @@ export function SaleForm({
     setDupPhone(emptyDup())
     setDocuments([])
     setDupNin(emptyDup())
-    setDupBvn(emptyDup())
     setSiteGps(null)
     setSitePhotoFile(null)
     setSiteError(null)
@@ -1157,10 +1131,6 @@ export function SaleForm({
         setError('new_customer.nin', { message: `NIN must be exactly ${NIN_DIGITS} digits` })
         return
       }
-      if (digitsOnly(nc.bvn).length !== BVN_DIGITS) {
-        setError('new_customer.bvn', { message: `BVN must be exactly ${BVN_DIGITS} digits` })
-        return
-      }
       if (!nc.gender.trim()) {
         setError('new_customer.gender', { message: 'Select gender' })
         return
@@ -1197,7 +1167,6 @@ export function SaleForm({
         name: nc.name,
         phone: nc.phone || nc.guardian_phone,
         nin: nc.nin,
-        bvn: nc.bvn,
         city: nc.city,
         state: nc.state,
         lga: nc.lga,
@@ -1215,27 +1184,26 @@ export function SaleForm({
         }
       } else {
       const hardIdFields = dupResult.data.hard.filter((m) =>
-        m.matched_fields?.some((f) => f === 'phone' || f === 'nin' || f === 'bvn' || f === 'serial')
+        m.matched_fields?.some((f) => f === 'phone' || f === 'nin' || f === 'serial')
       )
       if (hardIdFields.length > 0 || dupResult.data.by_field.some((d) =>
-        (['phone', 'nin', 'bvn', 'serial'] as const).includes(d.field as 'phone' | 'nin' | 'bvn' | 'serial')
+        (['phone', 'nin', 'serial'] as const).includes(d.field as 'phone' | 'nin' | 'serial')
       )) {
         for (const d of dupResult.data.by_field) {
-          if (d.field === 'phone' || d.field === 'nin' || d.field === 'bvn') {
+          if (d.field === 'phone' || d.field === 'nin') {
             const match = d.matches[0]
             setError(`new_customer.${d.field}`, {
               message: `Duplicate ${d.field.toUpperCase()} — already used by ${match?.name}`,
             })
             if (d.field === 'phone') setDupPhone({ checking: false, matches: d.matches })
             if (d.field === 'nin') setDupNin({ checking: false, matches: d.matches })
-            if (d.field === 'bvn') setDupBvn({ checking: false, matches: d.matches })
           }
         }
         const serialHit = dupResult.data.hard.find((m) => m.matched_fields?.includes('serial'))
         setFormError(
           serialHit
             ? `Device serial already registered to ${serialHit.name}. Fix before saving.`
-            : 'Fix duplicate phone, NIN, BVN, or serial before saving this sale.'
+            : 'Fix duplicate phone, NIN, or serial before saving this sale.'
         )
         return
       }
@@ -1414,7 +1382,7 @@ export function SaleForm({
               phone: values.new_customer.phone.trim(),
               alternate_phone: values.new_customer.alternate_phone.trim(),
               nin: digitsOnly(values.new_customer.nin),
-              bvn: digitsOnly(values.new_customer.bvn),
+              bvn: '',
               address: '',
               address_house_number: '',
               address_building_features: '',
@@ -1582,7 +1550,6 @@ export function SaleForm({
     setDupPhone(emptyDup())
     setDocuments([])
     setDupNin(emptyDup())
-    setDupBvn(emptyDup())
     setSiteGps(null)
     setSitePhotoFile(null)
     setSiteError(null)
@@ -1633,7 +1600,7 @@ export function SaleForm({
                 <div>
                   <p className="font-medium">New customer</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    Add details here — phone, NIN & BVN checked for duplicates
+                    Add details here — phone and NIN checked for duplicates
                   </p>
                 </div>
               </button>
@@ -1847,19 +1814,6 @@ export function SaleForm({
                     clearFieldDup('nin')
                   }}
                   onSearch={() => void runDuplicateCheck('nin')}
-                />
-                <UniqueField
-                  field="bvn"
-                  label="BVN"
-                  placeholder="11-digit BVN"
-                  dup={dupBvn}
-                  value={bvnValue}
-                  error={errors.new_customer?.bvn?.message}
-                  onChange={(next) => {
-                    setValue('new_customer.bvn', next, { shouldDirty: true })
-                    clearFieldDup('bvn')
-                  }}
-                  onSearch={() => void runDuplicateCheck('bvn')}
                 />
 
                 <div>

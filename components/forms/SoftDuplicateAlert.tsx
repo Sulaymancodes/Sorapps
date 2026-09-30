@@ -30,7 +30,7 @@ export function SoftDuplicateAlert({
           <p className="font-medium">Possible duplicate beneficiary</p>
           <p className="text-xs text-amber-900/80 dark:text-amber-100/80">
             Soft match on name and related details — review before saving. Hard matches (phone,
-            NIN, BVN, serial) still block save.
+            NIN, serial) still block save.
           </p>
           <ul className="space-y-2">
             {matches.slice(0, 5).map((m) => (

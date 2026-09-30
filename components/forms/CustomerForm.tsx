@@ -136,7 +136,6 @@ export function CustomerForm({
   const watchedName = useWatch({ control, name: 'name' }) || ''
   const watchedPhone = useWatch({ control, name: 'phone' }) || ''
   const watchedNin = useWatch({ control, name: 'nin' }) || ''
-  const watchedBvn = useWatch({ control, name: 'bvn' }) || ''
   const watchedCity = useWatch({ control, name: 'city' }) || ''
   const watchedGuardianPhone = useWatch({ control, name: 'guardian_phone' }) || ''
 
@@ -154,7 +153,7 @@ export function CustomerForm({
     const name = watchedName.trim()
     const timer = window.setTimeout(() => {
       void (async () => {
-        if (name.length < 3 && !watchedPhone && !watchedNin && !watchedBvn) {
+        if (name.length < 3 && !watchedPhone && !watchedNin) {
           setSoftMatches([])
           setHardMatches([])
           return
@@ -164,7 +163,6 @@ export function CustomerForm({
             name: name.length >= 3 ? name : undefined,
             phone: watchedPhone || watchedGuardianPhone || undefined,
             nin: watchedNin || undefined,
-            bvn: watchedBvn || undefined,
             city: watchedCity || undefined,
             state: selectedState || undefined,
             lga: selectedLga || undefined,
@@ -184,7 +182,6 @@ export function CustomerForm({
     watchedName,
     watchedPhone,
     watchedNin,
-    watchedBvn,
     watchedCity,
     selectedState,
     selectedLga,
@@ -321,11 +318,9 @@ export function CustomerForm({
         name: values.name.trim(),
         phone: values.phone || values.guardian_phone,
         nin: values.nin,
-        bvn: values.bvn,
         city: values.city,
         state: values.state,
         lga: values.lga,
-        address: composed,
         exclude_id: customer?.id || draft?.remoteId,
       })
       if (!scan.success) {
@@ -584,24 +579,6 @@ export function CustomerForm({
                 onChange: (e) => {
                   e.target.value = e.target.value.replace(/\D/g, '').slice(0, 11)
                   setValue('nin', e.target.value, { shouldDirty: true })
-                },
-              })}
-            />
-          </div>
-
-          <div>
-            <Label htmlFor="bvn">BVN</Label>
-            <Input
-              id="bvn"
-              type="tel"
-              inputMode="numeric"
-              autoComplete="off"
-              maxLength={11}
-              placeholder="11-digit BVN"
-              {...register('bvn', {
-                onChange: (e) => {
-                  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 11)
-                  setValue('bvn', e.target.value, { shouldDirty: true })
                 },
               })}
             />
