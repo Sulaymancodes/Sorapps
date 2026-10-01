@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchableSelect } from '@/components/common/SearchableSelect'
+import { TablePagination, usePagedList } from '@/components/common/TablePagination'
 import { getLgasForState } from '@/lib/constants/lgas'
 import { formatCurrency, formatDate, formatNumber } from '@/lib/utils/formatting'
 import { downloadCsv, rowsToCsv } from '@/lib/utils/csv'
@@ -85,38 +86,40 @@ function DataTable({
   rows: Record<string, unknown>[]
   empty: string
 }) {
+  const { page, setPage, paged, total } = usePagedList(
+    rows,
+    `${rows.length}:${String(rows[0]?.id ?? rows[0]?.sale_id ?? '')}:${String(rows[rows.length - 1]?.id ?? rows[rows.length - 1]?.sale_id ?? '')}`
+  )
   if (!rows.length) {
     return <p className="py-8 text-center text-sm text-muted-foreground">{empty}</p>
   }
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[640px] text-left text-sm">
-        <thead>
-          <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
-            {columns.map((c) => (
-              <th key={c.key} className="px-2 py-2 font-medium">
-                {c.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.slice(0, 50).map((row, idx) => (
-            <tr key={idx} className="border-b border-border/60">
+    <div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px] text-left text-sm">
+          <thead>
+            <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
               {columns.map((c) => (
-                <td key={c.key} className="px-2 py-2.5 align-top">
-                  {c.render ? c.render(row) : String(row[c.key] ?? '—')}
-                </td>
+                <th key={c.key} className="px-2 py-2 font-medium">
+                  {c.label}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length > 50 && (
-        <p className="mt-2 text-xs text-muted-foreground">
-          Showing 50 of {rows.length} — export CSV for the full set.
-        </p>
-      )}
+          </thead>
+          <tbody>
+            {paged.map((row, idx) => (
+              <tr key={idx} className="border-b border-border/60">
+                {columns.map((c) => (
+                  <td key={c.key} className="px-2 py-2.5 align-top">
+                    {c.render ? c.render(row) : String(row[c.key] ?? '—')}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <TablePagination page={page} total={total} onPageChange={setPage} />
     </div>
   )
 }
@@ -239,8 +242,12 @@ export function ReportsPageClient({
       </div>
 
       {filters.period !== 'all' && (
-      <Panel title="Report filters" description="Scope the ODDYSEA pack by period and geography">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <Panel
+        className="overflow-visible"
+        title="Report filters"
+        description="Scope the ODDYSEA pack by period and geography"
+      >
+        <div className="grid grid-cols-1 items-start gap-3 pb-8 sm:grid-cols-2 lg:grid-cols-4">
           {filters.period === 'custom' && (
             <>
               <div className="space-y-1.5">

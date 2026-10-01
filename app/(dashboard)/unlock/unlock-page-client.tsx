@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState, useTransition } from 'react'
-import { ChevronLeft, ChevronRight, FileSpreadsheet, FileText, KeyRound } from 'lucide-react'
+import { useMemo, useState, useTransition } from 'react'
+import { FileSpreadsheet, FileText, KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
+import { TablePagination, usePagedList } from '@/components/common/TablePagination'
 import { resolveUnlockPinAction } from '@/app/actions/unlocks'
 import { refreshUnlockPoolSnapshot } from '@/lib/offline/sync-unlock-pool'
 import { toDateInputValue, todayInLagos } from '@/lib/paygo/schedule'
@@ -19,7 +20,6 @@ import { sameSerialKey } from '@/lib/utils/serial'
 import { cn } from '@/lib/utils'
 
 const PARTIAL_DAYS = [7, 30, 60, 90, 180, 360] as const
-const PAGE_SIZE = 25
 
 type UnlockRow = {
   id: string
@@ -86,7 +86,8 @@ export function UnlockPageClient({
   const [search, setSearch] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [page, setPage] = useState(1)
+  const [typeFilter, setTypeFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
 
   const displayed = useMemo(() => {
     const sn = serial.trim()
@@ -105,6 +106,13 @@ export function UnlockPageClient({
       const day = lagosDay(row.created_at)
       if (start && day < start) return false
       if (end && day > end) return false
+      if (typeFilter === 'full' && row.kind !== 'full') return false
+      if (typeFilter === 'partial' && row.kind !== 'partial') return false
+      if (typeFilter && typeFilter !== 'full' && typeFilter !== 'partial') {
+        if (row.kind !== 'partial' || typeLabel(row) !== typeFilter) return false
+      }
+      if (statusFilter === 'available' && row.sale_id) return false
+      if (statusFilter === 'sold' && !row.sale_id) return false
       if (!q) return true
       return [
         row.serial_number,
@@ -116,15 +124,12 @@ export function UnlockPageClient({
         statusLabel(row),
       ].some((value) => String(value || '').toLowerCase().includes(q))
     })
-  }, [rows, search, dateFrom, dateTo])
+  }, [rows, search, dateFrom, dateTo, typeFilter, statusFilter])
 
-  useEffect(() => {
-    setPage(1)
-  }, [search, dateFrom, dateTo])
-
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE))
-  const currentPage = Math.min(page, totalPages)
-  const pagedRows = filteredRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+  const { page, setPage, paged: pagedRows, total, totalPages } = usePagedList(
+    filteredRows,
+    `${search}|${dateFrom}|${dateTo}|${typeFilter}|${statusFilter}`
+  )
 
   const rangeLabel = useMemo(() => {
     if (dateFrom && dateTo) return `${dateFrom} to ${dateTo}`
@@ -276,6 +281,43 @@ export function UnlockPageClient({
                 placeholder="Search serial, PIN, or type"
                 aria-label="Search PIN history"
               />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <Label htmlFor="pin-type" className="text-xs text-muted-foreground">
+                    Unlock type
+                  </Label>
+                  <select
+                    id="pin-type"
+                    className="mt-1 h-10 w-full rounded-lg border border-border/80 bg-background px-3 text-sm outline-none focus:border-ring focus:ring-3 focus:ring-ring/30"
+                    value={typeFilter}
+                    onChange={(event) => setTypeFilter(event.target.value)}
+                  >
+                    <option value="">All types</option>
+                    <option value="full">Full</option>
+                    <option value="partial">Partial</option>
+                    {PARTIAL_DAYS.map((value) => (
+                      <option key={value} value={`${value} days`}>
+                        {value} days
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <Label htmlFor="pin-status" className="text-xs text-muted-foreground">
+                    Unlock status
+                  </Label>
+                  <select
+                    id="pin-status"
+                    className="mt-1 h-10 w-full rounded-lg border border-border/80 bg-background px-3 text-sm outline-none focus:border-ring focus:ring-3 focus:ring-ring/30"
+                    value={statusFilter}
+                    onChange={(event) => setStatusFilter(event.target.value)}
+                  >
+                    <option value="">All statuses</option>
+                    <option value="available">Available</option>
+                    <option value="sold">Sold</option>
+                  </select>
+                </div>
+              </div>
               <div className="flex flex-wrap items-end gap-3">
                 <div className="min-w-[9.5rem] flex-1">
                   <Label htmlFor="pin-from" className="text-xs text-muted-foreground">
@@ -319,7 +361,7 @@ export function UnlockPageClient({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
                   {filteredRows.length} PIN{filteredRows.length === 1 ? '' : 's'} · {rangeLabel}
-                  {totalPages > 1 ? ` · page ${currentPage} of ${totalPages}` : ''}
+                  {totalPages > 1 ? ` · page ${page} of ${totalPages}` : ''}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Button
@@ -361,7 +403,7 @@ export function UnlockPageClient({
             <div className="px-6 py-14 text-center">
               <p className="font-medium">No matching PINs</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Try another serial, PIN, type, or date range.
+                Try another serial, PIN, type, status, or date range.
               </p>
             </div>
           ) : (
@@ -406,36 +448,8 @@ export function UnlockPageClient({
                 </tbody>
               </table>
             </div>
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between gap-3 border-t border-border/60 px-3 py-2.5">
-                <p className="text-xs text-muted-foreground">
-                  {(currentPage - 1) * PAGE_SIZE + 1}–
-                  {Math.min(currentPage * PAGE_SIZE, filteredRows.length)} of{' '}
-                  {filteredRows.length.toLocaleString()}
-                </p>
-                <div className="flex gap-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 gap-1"
-                    disabled={currentPage <= 1}
-                    onClick={() => setPage(currentPage - 1)}
-                  >
-                    <ChevronLeft className="size-3.5" />
-                    Prev
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 gap-1"
-                    disabled={currentPage >= totalPages}
-                    onClick={() => setPage(currentPage + 1)}
-                  >
-                    Next
-                    <ChevronRight className="size-3.5" />
-                  </Button>
-                </div>
-              </div>
+            {total > 0 && (
+              <TablePagination page={page} total={total} onPageChange={setPage} />
             )}
             </>
           )}

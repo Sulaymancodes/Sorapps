@@ -10,6 +10,7 @@ import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { useOfflineSync } from '@/components/offline/offline-sync-context'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
+import { TablePagination, usePagedList } from '@/components/common/TablePagination'
 import { formatDate } from '@/lib/utils/formatting'
 import type { SaleDraft } from '@/lib/offline/sale-drafts'
 
@@ -39,6 +40,8 @@ export function SaleDraftsPageClient() {
     () => [...saleDrafts].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [saleDrafts]
   )
+
+  const { page, setPage, paged, total } = usePagedList(sorted, sorted.length)
 
   async function handleSyncAll() {
     setActionError(null)
@@ -155,6 +158,7 @@ export function SaleDraftsPageClient() {
             </Link>
           </div>
         ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -170,7 +174,7 @@ export function SaleDraftsPageClient() {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((draft) => (
+                {paged.map((draft) => (
                   <tr
                     key={draft.localId}
                     className="border-b border-border/60 last:border-0 hover:bg-muted/40"
@@ -246,6 +250,8 @@ export function SaleDraftsPageClient() {
               </tbody>
             </table>
           </div>
+          <TablePagination page={page} total={total} onPageChange={setPage} />
+          </>
         )}
       </Panel>
       <ConfirmModal

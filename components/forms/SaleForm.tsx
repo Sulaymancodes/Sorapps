@@ -11,8 +11,6 @@ import {
   Search,
   Lock,
   Unlock,
-  UserPlus,
-  Users,
   KeyRound,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -21,16 +19,12 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Panel } from '@/components/common/Panel'
 import { SearchableSelect } from '@/components/common/SearchableSelect'
-import { CustomerPicker } from '@/components/forms/CustomerPicker'
 import { SiteVerificationPanel } from '@/components/forms/SiteVerificationPanel'
-import { DocumentUploader } from '@/components/documents/DocumentUploader'
 import { SerialBarcodeField } from '@/components/forms/SerialBarcodeField'
 import {
   DARES_CUSTOMER_CATEGORIES,
   DARES_CUSTOMER_TYPES,
   DARES_GENDERS,
-  DARES_PAYMENT_PLANS,
-  DARES_TYPES_OF_PAYMENT,
 } from '@/lib/constants/dares'
 import {
   GUARDIAN_RELATIONSHIPS,
@@ -45,7 +39,7 @@ import {
   todayInLagos,
 } from '@/lib/paygo/schedule'
 import { getLgasForState } from '@/lib/constants/lgas'
-import { checkSoldSerialsAction, createSaleAction } from '@/app/actions/sales'
+import { checkSoldSerialsAction, createSaleAction, updateSaleAction } from '@/app/actions/sales'
 import { resolveUnlockPinAction } from '@/app/actions/unlocks'
 import {
   checkCustomerDuplicateAction,
@@ -73,13 +67,12 @@ import {
   type CachedUnlock,
 } from '@/lib/offline/unlock-pool'
 import { refreshUnlockPoolSnapshot } from '@/lib/offline/sync-unlock-pool'
-import { useKycUploadsRequired } from '@/lib/offline/org-settings'
-import { hasKycOrSalesFormDoc, KYC_UPLOAD_REQUIRED_MESSAGE } from '@/lib/utils/kyc-docs'
 import type { DuplicateMatch as SoftDuplicateMatch } from '@/lib/services/customers'
 import type {
   Customer,
   PaymentType,
   Product,
+  Sale,
   SaleSiteGpsInput,
 } from '@/lib/types/crm'
 
@@ -214,6 +207,95 @@ type SaleFormValues = {
   cost_to_end_user_ngn: number
   downpayment_amount_ngn: number
   items: { product_id: string; quantity: number; serial_number: string }[]
+}
+
+function daresClaimFromSale(
+  paymentType: PaymentType,
+  paymentMethod: SaleFormValues['payment_method'],
+  productTotal: number
+) {
+  const total = Math.max(1, Math.round(productTotal) || 1)
+  return {
+    dares_type_of_payment:
+      paymentType === 'installment'
+        ? 'PAYGO'
+        : paymentMethod === 'bank_transfer'
+          ? 'Bank Transfer'
+          : paymentMethod === 'cash'
+            ? 'Cash'
+            : 'Other',
+    dares_payment_plan: paymentType === 'full' ? 'Full Payment' : 'Custom Installment',
+    retail_cost_ngn: total,
+    cost_to_end_user_ngn: total,
+    downpayment_amount_ngn: paymentType === 'full' ? total : 0,
+  }
+}
+
+function emptyCustomerValues(): SaleFormValues['new_customer'] {
+  return {
+    name: '',
+    email: '',
+    phone: '',
+    alternate_phone: '',
+    nin: '',
+    bvn: '',
+    address: '',
+    address_house_number: '',
+    address_building_features: '',
+    address_street: '',
+    address_landmark: '',
+    city: '',
+    state: '',
+    lga: '',
+    business_type: DARES_CUSTOMER_TYPES[0],
+    gender: '',
+    customer_category: '',
+    customer_type: DARES_CUSTOMER_TYPES[0],
+    is_minor: false,
+    guardian_name: '',
+    guardian_phone: '',
+    guardian_relationship: '',
+    next_of_kin_name: '',
+    next_of_kin_phone: '',
+    next_of_kin_relationship: '',
+  }
+}
+
+function customerToFormValues(customer?: Customer | null): SaleFormValues['new_customer'] {
+  if (!customer) return emptyCustomerValues()
+  return {
+    name: customer.name || '',
+    email: customer.email || '',
+    phone: customer.phone || '',
+    alternate_phone: customer.alternate_phone || '',
+    nin: digitsOnly(customer.nin || ''),
+    bvn: customer.bvn || '',
+    address: customer.address || '',
+    address_house_number: customer.address_house_number || '',
+    address_building_features: customer.address_building_features || '',
+    address_street: customer.address_street || '',
+    address_landmark: customer.address_landmark || '',
+    city: customer.city || '',
+    state: customer.state || '',
+    lga: customer.lga || '',
+    business_type: customer.business_type || DARES_CUSTOMER_TYPES[0],
+    gender: customer.gender || '',
+    customer_category: customer.customer_category || '',
+    customer_type: customer.customer_type || customer.business_type || DARES_CUSTOMER_TYPES[0],
+    is_minor: Boolean(customer.is_minor),
+    guardian_name: customer.guardian_name || '',
+    guardian_phone: customer.guardian_phone || '',
+    guardian_relationship: customer.guardian_relationship || '',
+    next_of_kin_name: customer.next_of_kin_name || '',
+    next_of_kin_phone: customer.next_of_kin_phone || '',
+    next_of_kin_relationship: customer.next_of_kin_relationship || '',
+  }
+}
+
+function asDate(value: Date | string | null | undefined) {
+  if (!value) return null
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
 }
 
 type FieldDupState = {
@@ -365,21 +447,42 @@ function writeProductLock(lock: ProductLock) {
 }
 
 export function SaleForm({
-  customers,
+  customers: _customers,
   products,
   forcedGeo,
   draftId,
+  mode = 'create',
+  sale,
+  customer,
+  initialItems,
+  showMoney = true,
 }: {
   customers: Customer[]
   products: Product[]
   /** When set (agent territory), state/LGA are locked and cannot be changed. */
   forcedGeo?: { state: string; lga: string } | null
   draftId?: string
+  mode?: 'create' | 'edit'
+  sale?: Sale
+  customer?: Customer
+  initialItems?: { product_id: string; quantity: number; serial_number: string }[]
+  showMoney?: boolean
 }) {
   const router = useRouter()
+  const isEdit = mode === 'edit' && Boolean(sale)
   const [geoLocked, setGeoLocked] = useState(false)
   const [productLocked, setProductLocked] = useState(false)
-  const [siteGps, setSiteGps] = useState<SaleSiteGpsInput | null>(null)
+  const [siteGps, setSiteGps] = useState<SaleSiteGpsInput | null>(() => {
+    if (!sale || sale.latitude == null || sale.longitude == null) return null
+    const captured = asDate(sale.gps_captured_at) || asDate(sale.date)
+    return {
+      latitude: Number(sale.latitude),
+      longitude: Number(sale.longitude),
+      captured_at: captured?.toISOString() || new Date().toISOString(),
+      locked: true,
+      out_of_area: Boolean(sale.gps_out_of_area),
+    }
+  })
   const [sitePhotoFile, setSitePhotoFile] = useState<File | null>(null)
   const [siteError, setSiteError] = useState<string | null>(null)
   const [dupPhone, setDupPhone] = useState<FieldDupState>(emptyDup)
@@ -391,12 +494,22 @@ export function SaleForm({
   const [activeDraftId, setActiveDraftId] = useState<string | undefined>(draftId)
   const [draftSavedOpen, setDraftSavedOpen] = useState(false)
   const [isOnline, setIsOnline] = useState(true)
-  const [linePins, setLinePins] = useState<Record<number, LineUnlockPin>>({})
+  const [linePins, setLinePins] = useState<Record<number, LineUnlockPin>>(() => {
+    const serial = (initialItems?.[0]?.serial_number || '').split(/[,\n]/)[0]?.trim() || ''
+    if (!sale?.unlock_pin || !serial) return {} as Record<number, LineUnlockPin>
+    return {
+      0: {
+        serial,
+        pin: sale.unlock_pin,
+        kind: sale.payment_type === 'full' ? 'full' : 'partial',
+        day_token: sale.payment_type === 'full' ? 'Full' : `${sale.installment_interval_days || 7}Days`,
+        reused: true,
+      },
+    }
+  })
   const [activateError, setActivateError] = useState<Record<number, string>>({})
   const [activatingIndex, setActivatingIndex] = useState<number | null>(null)
   const [serialSoldError, setSerialSoldError] = useState<string | null>(null)
-  const [kycError, setKycError] = useState<string | null>(null)
-  const kycUploadsRequired = useKycUploadsRequired()
 
   const {
     register,
@@ -411,47 +524,30 @@ export function SaleForm({
   } = useForm<SaleFormValues>({
     defaultValues: {
       customer_mode: 'new',
-      customer_id: '',
-      new_customer: {
-        name: '',
-        email: '',
-        phone: '',
-        alternate_phone: '',
-        nin: '',
-        bvn: '',
-        address: '',
-        address_house_number: '',
-        address_building_features: '',
-        address_street: '',
-        address_landmark: '',
-        city: '',
-        state: '',
-        lga: '',
-        business_type: DARES_CUSTOMER_TYPES[0],
-        gender: '',
-        customer_category: '',
-        customer_type: DARES_CUSTOMER_TYPES[0],
-        is_minor: false,
-        guardian_name: '',
-        guardian_phone: '',
-        guardian_relationship: '',
-        next_of_kin_name: '',
-        next_of_kin_phone: '',
-        next_of_kin_relationship: '',
-      },
-      payment_type: 'full',
-      payment_method: 'cash',
-      installment_interval_days: 7,
-      plan_end_date: toDateInputValue(addLocalDays(todayInLagos(), 28)),
-      discount_percent: 0,
-      transport_cost: 0,
-      notes: '',
-      dares_type_of_payment: '',
-      dares_payment_plan: 'Full Payment',
-      retail_cost_ngn: 0,
-      cost_to_end_user_ngn: 0,
-      downpayment_amount_ngn: 0,
-      items: [{ product_id: '', quantity: 1, serial_number: '' }],
+      customer_id: customer?.id || '',
+      new_customer: customerToFormValues(customer),
+      payment_type: sale?.payment_type || 'full',
+      payment_method: sale?.payment_method || 'cash',
+      installment_interval_days: sale?.installment_interval_days || 7,
+      plan_end_date: sale?.plan_end_date
+        ? toDateInputValue(asDate(sale.plan_end_date) || addLocalDays(todayInLagos(), 28))
+        : toDateInputValue(addLocalDays(todayInLagos(), 28)),
+      discount_percent: sale?.discount_percent || 0,
+      transport_cost: sale?.transport_cost || 0,
+      notes: sale?.notes || '',
+      dares_type_of_payment: sale?.dares_type_of_payment || '',
+      dares_payment_plan: sale?.dares_payment_plan || 'Full Payment',
+      retail_cost_ngn: sale?.retail_cost_ngn || 0,
+      cost_to_end_user_ngn: sale?.cost_to_end_user_ngn || 0,
+      downpayment_amount_ngn: sale?.downpayment_amount_ngn || 0,
+      items:
+        initialItems && initialItems.length
+          ? initialItems.map((item) => ({
+              product_id: item.product_id,
+              quantity: item.quantity || 1,
+              serial_number: item.serial_number || '',
+            }))
+          : [{ product_id: '', quantity: 1, serial_number: '' }],
     },
   })
 
@@ -460,42 +556,36 @@ export function SaleForm({
   const installmentIntervalDays = useWatch({ control, name: 'installment_interval_days' })
   const planEndDate = useWatch({ control, name: 'plan_end_date' })
   const isInstallment = paymentType === 'installment'
-  const customerMode = useWatch({ control, name: 'customer_mode' })
-  const customerId = useWatch({ control, name: 'customer_id' })
   const watchedItems = useWatch({ control, name: 'items' })
   const selectedState = useWatch({ control, name: 'new_customer.state' }) || ''
   const selectedLga = useWatch({ control, name: 'new_customer.lga' }) || ''
   const firstProductId = watchedItems?.[0]?.product_id || ''
-  const retailCostNgn = useWatch({ control, name: 'retail_cost_ngn' })
-  const costToEndUserNgn = useWatch({ control, name: 'cost_to_end_user_ngn' })
-  const daresPaymentPlan = useWatch({ control, name: 'dares_payment_plan' })
-  const daresTypeOfPayment = useWatch({ control, name: 'dares_type_of_payment' })
   const unlockKind = paymentType === 'full' ? 'full' : 'partial'
   const unlockDays = Math.max(1, Math.round(Number(installmentIntervalDays) || 7))
   const unlockLabel = unlockKind === 'full' ? 'full unlock' : `${unlockDays}-day PIN`
 
   useEffect(() => {
+    if (isEdit && sale?.unlock_pin) {
+      return
+    }
     setLinePins({})
     setActivateError({})
-  }, [paymentType, installmentIntervalDays])
+  }, [paymentType, installmentIntervalDays, isEdit, sale?.unlock_pin])
 
-  const existingCustomer = useMemo(
-    () => (customerId ? customers.find((c) => c.id === customerId) : undefined),
-    [customers, customerId]
-  )
-
-  const deploymentState =
-    customerMode === 'existing' ? existingCustomer?.state || '' : selectedState
-  const deploymentLga =
-    customerMode === 'existing' ? existingCustomer?.lga || '' : selectedLga
+  const deploymentState = selectedState
+  const deploymentLga = selectedLga
 
   const inStockProducts = useMemo(() => {
+    const onSale = new Set((initialItems || []).map((item) => item.product_id).filter(Boolean))
     return products
-      .filter((p) => p.stock > 0 || (productLocked && p.id === firstProductId))
+      .filter(
+        (p) => p.stock > 0 || onSale.has(p.id) || (productLocked && p.id === firstProductId)
+      )
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [products, productLocked, firstProductId])
+  }, [products, productLocked, firstProductId, initialItems])
 
   useEffect(() => {
+    if (isEdit) return
     if (forcedGeo?.state && forcedGeo?.lga) {
       setGeoLocked(true)
       setValue('new_customer.state', forcedGeo.state)
@@ -520,7 +610,7 @@ export function SaleForm({
         },
       ])
     }
-  }, [setValue, forcedGeo])
+  }, [setValue, forcedGeo, isEdit])
 
   const lgaOptions = useMemo(() => getLgasForState(selectedState), [selectedState])
 
@@ -555,6 +645,7 @@ export function SaleForm({
   }, [])
 
   useEffect(() => {
+    if (isEdit) return
     if (!draftId) return
     void getSaleDraft(draftId).then((draft) => {
       if (!draft) return
@@ -582,34 +673,6 @@ export function SaleForm({
       )
     })
   }, [draftId, reset])
-
-  // Auto-fill retail cost from product totals when still 0
-  useEffect(() => {
-    if (totals.total > 0 && (!retailCostNgn || Number(retailCostNgn) === 0)) {
-      setValue('retail_cost_ngn', totals.total, { shouldDirty: false })
-    }
-  }, [totals.total, retailCostNgn, setValue])
-
-  // Suggest DARES payment plan / type from sale payment_type
-  useEffect(() => {
-    if (paymentType === 'full') {
-      setValue('dares_payment_plan', 'Full Payment', { shouldDirty: false })
-      if (!costToEndUserNgn || Number(costToEndUserNgn) <= 0) {
-        // leave cost alone; downpayment synced when cost is set
-      } else {
-        setValue('downpayment_amount_ngn', Number(costToEndUserNgn), { shouldDirty: false })
-      }
-    } else if (paymentType === 'installment') {
-      const plan = getValues('dares_payment_plan')
-      if (!plan || plan === 'Full Payment') {
-        setValue('dares_payment_plan', 'Custom Installment', { shouldDirty: false })
-      }
-      const type = getValues('dares_type_of_payment')
-      if (!type) {
-        setValue('dares_type_of_payment', 'PAYGO', { shouldDirty: false })
-      }
-    }
-  }, [paymentType, costToEndUserNgn, setValue, getValues])
 
   const planPreview = useMemo(() => {
     if (!isInstallment) return null
@@ -661,6 +724,7 @@ export function SaleForm({
       const result = await checkCustomerDuplicateAction({
         phone: field === 'phone' ? value : undefined,
         nin: field === 'nin' ? value : undefined,
+        exclude_id: customer?.id,
       })
 
       if (!result.success) {
@@ -679,7 +743,7 @@ export function SaleForm({
         clearErrors(`new_customer.${field}`)
       }
     },
-    [getValues, setError, clearErrors]
+    [getValues, setError, clearErrors, customer?.id]
   )
 
   const clearFieldDup = (field: DuplicateField) => {
@@ -696,7 +760,6 @@ export function SaleForm({
   const guardianPhoneValue = useWatch({ control, name: 'new_customer.guardian_phone' }) || ''
 
   useEffect(() => {
-    if (customerMode !== 'new') return
     const timer = window.setTimeout(() => {
       if (isCompleteUniqueValue('phone', phoneValue)) {
         void runDuplicateCheck('phone', { silentIncomplete: true })
@@ -705,10 +768,9 @@ export function SaleForm({
       }
     }, UNIQUE_CHECK_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [phoneValue, customerMode, runDuplicateCheck])
+  }, [phoneValue, runDuplicateCheck])
 
   useEffect(() => {
-    if (customerMode !== 'new') return
     const timer = window.setTimeout(() => {
       if (isCompleteUniqueValue('nin', ninValue)) {
         void runDuplicateCheck('nin', { silentIncomplete: true })
@@ -717,14 +779,9 @@ export function SaleForm({
       }
     }, UNIQUE_CHECK_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [ninValue, customerMode, runDuplicateCheck])
+  }, [ninValue, runDuplicateCheck])
 
   useEffect(() => {
-    if (customerMode !== 'new') {
-      setSoftMatches([])
-      setSoftAcknowledged(false)
-      return
-    }
     const name = customerNameValue.trim()
     if (name.length < 3) {
       setSoftMatches([])
@@ -747,6 +804,8 @@ export function SaleForm({
           state: selectedState || undefined,
           lga: selectedLga || undefined,
           serial: serials.length ? serials : undefined,
+          exclude_id: customer?.id,
+          exclude_sale_id: sale?.id,
         }).catch(() => ({ success: false as const, error: 'scan failed' }))
         if (!result.success) return
         setSoftMatches(result.data.soft)
@@ -755,7 +814,6 @@ export function SaleForm({
     }, UNIQUE_CHECK_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
   }, [
-    customerMode,
     customerNameValue,
     customerCityValue,
     selectedState,
@@ -811,7 +869,7 @@ export function SaleForm({
           setSerialSoldError(null)
           return
         }
-        const result = await checkSoldSerialsAction(serials).catch(() => ({
+        const result = await checkSoldSerialsAction(serials, sale?.id).catch(() => ({
           success: false as const,
           error: 'check failed',
         }))
@@ -872,10 +930,7 @@ export function SaleForm({
     if (!siteGps?.locked || !sitePhotoFile) {
       throw new Error('Unit photo and GPS are required')
     }
-    const customerName =
-      values.customer_mode === 'new'
-        ? values.new_customer.name.trim()
-        : customers.find((c) => c.id === values.customer_id)?.name || 'Existing customer'
+    const customerName = values.new_customer.name.trim()
     const serials = parseDeviceSerials(values.items.map((item) => item.serial_number))
     const pins = await pinsForSaleSerials(serials)
     const unlockPin =
@@ -1080,22 +1135,12 @@ export function SaleForm({
       setSiteError('Take the unit photo to capture and lock GPS')
       return
     }
-    if (!sitePhotoFile) {
+    if (!sitePhotoFile && !(isEdit && sale?.site_photo_url)) {
       setSiteError('Attach a unit photo before saving')
       return
     }
-    if (kycUploadsRequired && !hasKycOrSalesFormDoc(documents)) {
-      setKycError(KYC_UPLOAD_REQUIRED_MESSAGE)
-      return
-    }
 
-    if (values.customer_mode === 'existing') {
-      if (!values.customer_id) {
-        setError('customer_id', { message: 'Select a customer' })
-        return
-      }
-    } else {
-      const nc = values.new_customer
+    const nc = values.new_customer
       if (!nc.name.trim() || nc.name.trim().length < 2) {
         setError('new_customer.name', { message: 'Enter the customer name' })
         return
@@ -1171,6 +1216,8 @@ export function SaleForm({
         state: nc.state,
         lga: nc.lga,
         serial: serials,
+        exclude_id: customer?.id,
+        exclude_sale_id: sale?.id,
       }).catch((error) => {
         if (isLikelyNetworkError(error)) return { success: false as const, error: 'offline' }
         throw error
@@ -1217,24 +1264,10 @@ export function SaleForm({
         }
       }
       }
-      }
     }
 
     if (!values.items.some((item) => item.product_id && item.quantity > 0)) {
       setError('items', { message: 'Add at least one product line' })
-      return
-    }
-
-    if (!(values.dares_type_of_payment || '').trim()) {
-      setFormError('Select DARES type of payment')
-      return
-    }
-    if (!(values.dares_payment_plan || '').trim()) {
-      setFormError('Select DARES payment plan')
-      return
-    }
-    if (Number(values.cost_to_end_user_ngn) <= 0) {
-      setFormError('Enter cost to end user (NGN)')
       return
     }
 
@@ -1251,7 +1284,7 @@ export function SaleForm({
         return
       }
       const end = parseDateInput(values.plan_end_date)
-      const start = todayInLagos()
+      const start = (isEdit && asDate(sale?.date)) || todayInLagos()
       if (Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
         setError('plan_end_date', {
           message: `Plan end date must be after the sale date (${toDateInputValue(start)})`,
@@ -1270,9 +1303,12 @@ export function SaleForm({
 
     for (const [productId, qty] of qtyByProduct) {
       const product = products.find((p) => p.id === productId)
-      if (product && product.stock < qty) {
+      const alreadyOnSale = (initialItems || [])
+        .filter((item) => item.product_id === productId)
+        .reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
+      if (product && product.stock + alreadyOnSale < qty) {
         setError('items', {
-          message: `Not enough stock for ${product.name}. Available: ${product.stock} ${product.unit}`,
+          message: `Not enough stock for ${product.name}. Available: ${product.stock + alreadyOnSale} ${product.unit}`,
         })
         return
       }
@@ -1307,9 +1343,11 @@ export function SaleForm({
       setError('items', { message: localProblem })
       return
     }
-    const localPool = await checkSerialsAgainstLocalPool(saleSerials, activeDraftId).catch(
-      () => ({}) as { error?: string }
-    )
+    const localPool = isEdit
+      ? ({} as { error?: string })
+      : await checkSerialsAgainstLocalPool(saleSerials, activeDraftId).catch(
+          () => ({}) as { error?: string }
+        )
     if (localPool.error) {
       setSerialSoldError(localPool.error)
       setFormError(localPool.error)
@@ -1317,7 +1355,7 @@ export function SaleForm({
       return
     }
     if (isBrowserOnline()) {
-      const sold = await checkSoldSerialsAction(saleSerials).catch((error) => {
+      const sold = await checkSoldSerialsAction(saleSerials, sale?.id).catch((error) => {
         if (isLikelyNetworkError(error)) return { success: false as const, error: 'offline' }
         throw error
       })
@@ -1337,6 +1375,116 @@ export function SaleForm({
       }
     }
 
+    if (isEdit && sale) {
+      if (!isBrowserOnline()) {
+        setFormError('Connect to the internet to save sale edits')
+        return
+      }
+
+      let sitePhotoUrl = sale.site_photo_url || ''
+      try {
+        if (sitePhotoFile) sitePhotoUrl = await uploadSitePhotoFile(sitePhotoFile)
+      } catch (error) {
+        setSiteError(error instanceof Error ? error.message : 'Could not upload unit photo')
+        return
+      }
+
+      const claim = daresClaimFromSale(values.payment_type, values.payment_method, totals.total)
+      const result = await updateSaleAction(sale.id, {
+        customer_id: sale.customer_id,
+        new_customer: {
+          name: values.new_customer.name.trim(),
+          email: '',
+          phone: values.new_customer.phone.trim(),
+          alternate_phone: values.new_customer.alternate_phone.trim(),
+          nin: digitsOnly(values.new_customer.nin),
+          bvn: '',
+          address: '',
+          address_house_number: '',
+          address_building_features: '',
+          address_street: '',
+          address_landmark: '',
+          city: values.new_customer.city.trim(),
+          state: values.new_customer.state.trim(),
+          lga: values.new_customer.lga.trim(),
+          business_type:
+            values.new_customer.customer_type || values.new_customer.business_type,
+          gender: values.new_customer.gender.trim(),
+          customer_category: values.new_customer.customer_category.trim(),
+          customer_type: values.new_customer.customer_type.trim(),
+          credit_limit: customer?.credit_limit ?? 0,
+          is_minor: Boolean(values.new_customer.is_minor),
+          guardian_name: values.new_customer.is_minor
+            ? (values.new_customer.guardian_name || '').trim()
+            : '',
+          guardian_phone: values.new_customer.is_minor
+            ? (values.new_customer.guardian_phone || '').trim()
+            : '',
+          guardian_relationship: values.new_customer.is_minor
+            ? (values.new_customer.guardian_relationship || '').trim()
+            : '',
+          next_of_kin_name: values.new_customer.is_minor
+            ? (values.new_customer.next_of_kin_name || '').trim()
+            : '',
+          next_of_kin_phone: values.new_customer.is_minor
+            ? (values.new_customer.next_of_kin_phone || '').trim()
+            : '',
+          next_of_kin_relationship: values.new_customer.is_minor
+            ? (values.new_customer.next_of_kin_relationship || '').trim()
+            : '',
+        },
+        payment_type: values.payment_type,
+        payment_method: values.payment_method,
+        installment_interval_days:
+          values.payment_type === 'installment'
+            ? Math.round(Number(values.installment_interval_days))
+            : undefined,
+        plan_end_date:
+          values.payment_type === 'installment' ? values.plan_end_date : undefined,
+        discount_percent: 0,
+        transport_cost: 0,
+        notes: values.notes || sale.notes || '',
+        dares_type_of_payment: claim.dares_type_of_payment,
+        dares_payment_plan: claim.dares_payment_plan,
+        retail_cost_ngn: claim.retail_cost_ngn,
+        cost_to_end_user_ngn: claim.cost_to_end_user_ngn,
+        downpayment_amount_ngn: claim.downpayment_amount_ngn,
+        items: values.items
+          .filter((item) => item.product_id)
+          .map((item) => ({
+            product_id: item.product_id,
+            quantity: Number(item.quantity) || 1,
+            serial_number: item.serial_number.trim(),
+          })),
+        site_gps: {
+          latitude: siteGps.latitude,
+          longitude: siteGps.longitude,
+          captured_at: siteGps.captured_at,
+          locked: true as const,
+          out_of_area: siteGps.out_of_area,
+          deployment_area_id: siteGps.deployment_area_id ?? null,
+          deployment_area_name: siteGps.deployment_area_name ?? null,
+          subsidy_level: siteGps.subsidy_level ?? null,
+          out_of_area_reason: siteGps.out_of_area_reason ?? null,
+        },
+        site_photo_url: sitePhotoUrl,
+      }).catch((error) => {
+        if (isLikelyNetworkError(error)) return { success: false as const, error: 'offline' }
+        throw error
+      })
+
+      if (!result.success) {
+        setFormError(result.error)
+        return
+      }
+
+      document.querySelector('main')?.scrollTo({ top: 0, left: 0 })
+      window.scrollTo({ top: 0, left: 0 })
+      router.push('/sales')
+      router.refresh()
+      return
+    }
+
     if (!isBrowserOnline()) {
       try {
         await saveSaleAsDraft(values)
@@ -1350,6 +1498,10 @@ export function SaleForm({
     let sitePhotoUrl: string
     let remoteDocuments
     try {
+      if (!sitePhotoFile) {
+        setSiteError('Attach a unit photo before saving')
+        return
+      }
       sitePhotoUrl = await uploadSitePhotoFile(sitePhotoFile)
       remoteDocuments = await uploadPendingDocuments(documents)
     } catch (error) {
@@ -1358,29 +1510,22 @@ export function SaleForm({
         resetFormAfterQueue(values)
         return
       }
-      setSiteError(error instanceof Error ? error.message : 'Could not upload unit photo or KYC')
+      setSiteError(error instanceof Error ? error.message : 'Could not upload unit photo')
       return
     }
 
-    const costToEndUser = Number(values.cost_to_end_user_ngn) || 0
-    const downpayment =
-      values.payment_type === 'full'
-        ? costToEndUser
-        : Number(values.downpayment_amount_ngn) || 0
+    const claim = daresClaimFromSale(values.payment_type, values.payment_method, totals.total)
     const firstSerial = values.items.find((item) => item.product_id)?.serial_number.trim() || ''
     const preparedUnlockPin =
       Object.values(linePins).find((row) => sameSerialKey(row.serial, firstSerial))?.pin ||
       (await pinsForSaleSerials([firstSerial]))[0]?.pin
 
     const result = await createSaleAction({
-      customer_id: values.customer_mode === 'existing' ? values.customer_id : undefined,
-      new_customer:
-        values.customer_mode === 'new'
-          ? {
+      new_customer: {
               name: values.new_customer.name.trim(),
               email: '',
               phone: values.new_customer.phone.trim(),
-              alternate_phone: values.new_customer.alternate_phone.trim(),
+              alternate_phone: '',
               nin: digitsOnly(values.new_customer.nin),
               bvn: '',
               address: '',
@@ -1416,8 +1561,7 @@ export function SaleForm({
               next_of_kin_relationship: values.new_customer.is_minor
                 ? (values.new_customer.next_of_kin_relationship || '').trim()
                 : '',
-            }
-          : undefined,
+            },
       payment_type: values.payment_type,
       payment_method: values.payment_method,
       installment_interval_days:
@@ -1429,11 +1573,11 @@ export function SaleForm({
       discount_percent: 0,
       transport_cost: 0,
       notes: '',
-      dares_type_of_payment: values.dares_type_of_payment.trim(),
-      dares_payment_plan: values.dares_payment_plan.trim(),
-      retail_cost_ngn: Number(values.retail_cost_ngn) || totals.total,
-      cost_to_end_user_ngn: costToEndUser,
-      downpayment_amount_ngn: downpayment,
+      dares_type_of_payment: claim.dares_type_of_payment,
+      dares_payment_plan: claim.dares_payment_plan,
+      retail_cost_ngn: claim.retail_cost_ngn,
+      cost_to_end_user_ngn: claim.cost_to_end_user_ngn,
+      downpayment_amount_ngn: claim.downpayment_amount_ngn,
       items: values.items
         .filter((item) => item.product_id)
         .map((item) => ({
@@ -1581,66 +1725,9 @@ export function SaleForm({
   return (
     <>
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-      <Panel title="Customer & payment" description="Choose who is buying and how they will pay">
+      <Panel title="Customer & payment" description="Who is buying and how they will pay">
         <div className="space-y-5">
-          <div>
-            <Label>Customer source</Label>
-            <div className="mt-1.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => setValue('customer_mode', 'new')}
-                className={cn(
-                  'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
-                  customerMode === 'new'
-                    ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
-                    : 'border-border/80 hover:border-primary/40'
-                )}
-              >
-                <UserPlus className="mt-0.5 size-5 text-primary" />
-                <div>
-                  <p className="font-medium">New customer</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    Add details here — phone and NIN checked for duplicates
-                  </p>
-                </div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setValue('customer_mode', 'existing')}
-                className={cn(
-                  'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
-                  customerMode === 'existing'
-                    ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
-                    : 'border-border/80 hover:border-primary/40'
-                )}
-              >
-                <Users className="mt-0.5 size-5 text-primary" />
-                <div>
-                  <p className="font-medium">Existing customer</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Search and select from the list</p>
-                </div>
-              </button>
-            </div>
-            <input type="hidden" {...register('customer_mode')} />
-          </div>
-
-          {customerMode === 'existing' ? (
-            <div>
-              <Label>Customer</Label>
-              <div className="mt-1.5">
-                <CustomerPicker
-                  customers={customers}
-                  value={customerId || ''}
-                  onChange={(id) =>
-                    setValue('customer_id', id, { shouldValidate: true, shouldDirty: true })
-                  }
-                  error={errors.customer_id?.message}
-                />
-              </div>
-              <input type="hidden" {...register('customer_id')} />
-            </div>
-          ) : (
-            <div className="space-y-4 rounded-xl border border-border/70 bg-secondary/15 p-4">
+          <div className="space-y-4 rounded-xl border border-border/70 bg-secondary/15 p-4">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="md:col-span-2">
                   <Label htmlFor="new_customer.name">Full name</Label>
@@ -1720,7 +1807,7 @@ export function SaleForm({
                   <input type="hidden" {...register('new_customer.business_type')} />
                 </div>
 
-                {customerMode === 'new' && softMatches.length > 0 && (
+                {softMatches.length > 0 && (
                   <div className="md:col-span-2">
                     <SoftDuplicateAlert
                       matches={softMatches}
@@ -1781,27 +1868,6 @@ export function SaleForm({
                   }}
                   onSearch={() => void runDuplicateCheck('phone')}
                 />
-                <div>
-                  <Label htmlFor="new_customer.alternate_phone">Alternate phone (optional)</Label>
-                  <Input
-                    id="new_customer.alternate_phone"
-                    type="tel"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    maxLength={13}
-                    placeholder="07012345678"
-                    {...register('new_customer.alternate_phone', {
-                      onChange: (e) => {
-                        const digits = e.target.value.replace(/\D/g, '')
-                        const limit = digits.startsWith('234') ? 13 : 11
-                        e.target.value = digits.slice(0, limit)
-                        setValue('new_customer.alternate_phone', e.target.value, {
-                          shouldDirty: true,
-                        })
-                      },
-                    })}
-                  />
-                </div>
                 <UniqueField
                   field="nin"
                   label="NIN"
@@ -2033,23 +2099,6 @@ export function SaleForm({
                 </fieldset>
               </div>
             </div>
-          )}
-
-          <DocumentUploader
-            value={documents}
-            onChange={(next) => {
-              setDocuments(next)
-              if (hasKycOrSalesFormDoc(next)) setKycError(null)
-            }}
-            label="KYC / sales form uploads"
-            description={
-              kycUploadsRequired
-                ? 'Required. Take a photo or upload JPG, PNG, or PDF — multiple pages for audit'
-                : 'Optional. Take a photo or upload JPG, PNG, or PDF — multiple pages for audit'
-            }
-            required={kycUploadsRequired}
-            error={kycError}
-          />
 
           <div>
             <Label>Payment type</Label>
@@ -2181,8 +2230,8 @@ export function SaleForm({
               {planPreview && (
                 <div className="rounded-lg border border-border/60 bg-background px-3 py-2 text-sm">
                   <p className="font-medium">
-                    {planPreview.count} payment{planPreview.count === 1 ? '' : 's'} ·{' '}
-                    {formatCurrency(planPreview.amount)} each
+                    {planPreview.count} payment{planPreview.count === 1 ? '' : 's'}
+                    {showMoney ? ` · ${formatCurrency(planPreview.amount)} each` : ''}
                   </p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     First due {formatDate(planPreview.first_due)} · Last due{' '}
@@ -2192,108 +2241,6 @@ export function SaleForm({
               )}
             </div>
           )}
-
-          <div className="space-y-4 rounded-xl border border-border/70 bg-secondary/15 p-4">
-            <div>
-              <p className="text-sm font-medium">DARES claim payment</p>
-              <p className="text-xs text-muted-foreground">
-                Odyssey / PMU fields for claim submission
-              </p>
-            </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <Label htmlFor="dares_type_of_payment">Type of payment</Label>
-                <Select
-                  id="dares_type_of_payment"
-                  className="mt-1.5"
-                  {...register('dares_type_of_payment')}
-                >
-                  <option value="">Select…</option>
-                  {DARES_TYPES_OF_PAYMENT.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="dares_payment_plan">Payment plan</Label>
-                <Select
-                  id="dares_payment_plan"
-                  className="mt-1.5"
-                  {...register('dares_payment_plan')}
-                >
-                  <option value="">Select…</option>
-                  {DARES_PAYMENT_PLANS.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="retail_cost_ngn">Retail cost of system (NGN)</Label>
-                <Input
-                  id="retail_cost_ngn"
-                  type="number"
-                  min={0}
-                  step={1}
-                  inputMode="numeric"
-                  className="mt-1.5"
-                  {...register('retail_cost_ngn', { valueAsNumber: true })}
-                />
-                {totals.total > 0 && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Product total: {formatCurrency(totals.total)}
-                  </p>
-                )}
-              </div>
-              <div>
-                <Label htmlFor="cost_to_end_user_ngn">Cost to end user (NGN)</Label>
-                <Input
-                  id="cost_to_end_user_ngn"
-                  type="number"
-                  min={1}
-                  step={1}
-                  inputMode="numeric"
-                  className="mt-1.5"
-                  {...register('cost_to_end_user_ngn', {
-                    valueAsNumber: true,
-                    onChange: (e) => {
-                      const n = Number(e.target.value) || 0
-                      setValue('cost_to_end_user_ngn', n, { shouldDirty: true })
-                      if (!isInstallment) {
-                        setValue('downpayment_amount_ngn', n, { shouldDirty: true })
-                      }
-                    },
-                  })}
-                />
-              </div>
-              <div className={isInstallment ? 'sm:col-span-2' : ''}>
-                <Label htmlFor="downpayment_amount_ngn">Downpayment amount (NGN)</Label>
-                <Input
-                  id="downpayment_amount_ngn"
-                  type="number"
-                  min={0}
-                  step={1}
-                  inputMode="numeric"
-                  className="mt-1.5"
-                  disabled={!isInstallment}
-                  {...register('downpayment_amount_ngn', { valueAsNumber: true })}
-                />
-                {!isInstallment && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Full payment — downpayment matches cost to end user
-                  </p>
-                )}
-              </div>
-            </div>
-            {(daresTypeOfPayment || daresPaymentPlan) && (
-              <p className="text-xs text-muted-foreground">
-                {[daresTypeOfPayment, daresPaymentPlan].filter(Boolean).join(' · ')}
-              </p>
-            )}
-          </div>
         </div>
       </Panel>
 
@@ -2353,8 +2300,9 @@ export function SaleForm({
                   <option value="">Select product…</option>
                   {inStockProducts.map((product) => (
                     <option key={product.id} value={product.id}>
-                      {product.name} — {formatCurrency(product.price)} (stock {product.stock}{' '}
-                      {product.unit})
+                      {showMoney
+                        ? `${product.name} — ${formatCurrency(product.price)} (stock ${product.stock} ${product.unit})`
+                        : `${product.name} (stock ${product.stock} ${product.unit})`}
                     </option>
                   ))}
                 </Select>
@@ -2419,21 +2367,25 @@ export function SaleForm({
               </div>
               {(watchedItems?.[index]?.serial_number || '').trim() ? (
                 <div className="space-y-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="gap-1.5"
-                    disabled={activatingIndex === index}
-                    onClick={() => void activateLine(index)}
-                  >
-                    <KeyRound className="size-4" />
-                    {activatingIndex === index ? 'Activating…' : `Activate ${unlockLabel}`}
-                  </Button>
-                  <p className="text-xs text-muted-foreground">
-                    Checks the shared unlock pool first. If this serial is not unlocked yet and you
-                    are online, it fetches the PIN from BeeBeeJump. Offline, only downloaded unused
-                    PINs can be attached.
-                  </p>
+                  {!isEdit ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="gap-1.5"
+                        disabled={activatingIndex === index}
+                        onClick={() => void activateLine(index)}
+                      >
+                        <KeyRound className="size-4" />
+                        {activatingIndex === index ? 'Activating…' : `Activate ${unlockLabel}`}
+                      </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Checks the shared unlock pool first. If this serial is not unlocked yet and you
+                        are online, it fetches the PIN from BeeBeeJump. Offline, only downloaded unused
+                        PINs can be attached.
+                      </p>
+                    </>
+                  ) : null}
                   {activateError[index] ? (
                     <p className="text-sm text-destructive">{activateError[index]}</p>
                   ) : null}
@@ -2445,13 +2397,22 @@ export function SaleForm({
                   ) ? (
                     <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-3">
                       <p className="text-xs font-medium text-muted-foreground">
-                        {linePins[index].reused
-                          ? 'PIN from shared unlock pool'
-                          : 'PIN fetched from BeeBeeJump'}{' '}
+                        {isEdit
+                          ? 'Device PIN on this sale'
+                          : linePins[index].reused
+                            ? 'PIN from shared unlock pool'
+                            : 'PIN fetched from BeeBeeJump'}{' '}
                         · {linePins[index].kind === 'full' ? 'Full' : linePins[index].day_token.replace('Days', ' days')}
                       </p>
                       <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.18em] text-primary">
                         {linePins[index].pin}
+                      </p>
+                    </div>
+                  ) : isEdit && sale?.unlock_pin && index === 0 ? (
+                    <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-3">
+                      <p className="text-xs font-medium text-muted-foreground">Device PIN on this sale</p>
+                      <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.18em] text-primary">
+                        {sale.unlock_pin}
                       </p>
                     </div>
                   ) : null}
@@ -2484,6 +2445,7 @@ export function SaleForm({
       <SiteVerificationPanel
         gps={siteGps}
         photoFile={sitePhotoFile}
+        existingPhotoUrl={isEdit ? sale?.site_photo_url : undefined}
         expectedState={deploymentState}
         expectedLga={deploymentLga}
         onGpsChange={setSiteGps}
@@ -2498,8 +2460,23 @@ export function SaleForm({
       ) : null}
 
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={isSubmitting || Boolean(serialSoldError) || (isOnline && hasDuplicates)}>
-          {!isOnline ? 'Save draft offline' : activeDraftId ? 'Save and sync' : 'Create sale'}
+        <Button
+          type="submit"
+          disabled={
+            isSubmitting ||
+            Boolean(serialSoldError) ||
+            (!isEdit && isOnline && hasDuplicates)
+          }
+        >
+          {isEdit
+            ? isSubmitting
+              ? 'Saving…'
+              : 'Save changes'
+            : !isOnline
+              ? 'Save draft offline'
+              : activeDraftId
+                ? 'Save and sync'
+                : 'Create sale'}
         </Button>
         <Button type="button" variant="outline" onClick={() => router.push('/sales')}>
           Cancel
@@ -2510,7 +2487,7 @@ export function SaleForm({
       <OfflineDraftSavedModal
         onClose={() => setDraftSavedOpen(false)}
         draftsHref="/sales/drafts"
-        message="This sale was saved as a draft on this device, including customer details, KYC, unit photo, and GPS. It will sync automatically when you reconnect, or tap Sync now in the header."
+        message="This sale was saved as a draft on this device, including customer details, unit photo, and GPS. It will sync automatically when you reconnect, or tap Sync now in the header."
       />
     )}
     </>

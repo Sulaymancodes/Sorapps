@@ -13,8 +13,9 @@ import {
 import {
   LineChart,
   Line,
-  BarChart,
-  Bar,
+  PieChart,
+  Pie,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -53,6 +54,25 @@ function ChartTooltip({ active, payload, label }: any) {
           {entry.name}: {formatCurrency((entry.value as number) * 1000)}
         </p>
       ))}
+    </div>
+  )
+}
+
+const GENDER_COLORS: Record<string, string> = {
+  Male: COLORS.primary,
+  Female: COLORS.accent,
+  'Prefer not to say': COLORS.info,
+  Unspecified: '#94a3b8',
+}
+
+function GenderTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null
+  const row = payload[0]
+  return (
+    <div className="rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-lg">
+      <p className="font-medium text-foreground">
+        {row.name}: {formatNumber(row.value)}
+      </p>
     </div>
   )
 }
@@ -102,6 +122,7 @@ export function DashboardPageClient({
   }
 
   const maxProduct = data.top_products[0]?.value || 1
+  const genderTotal = data.by_gender.reduce((sum, row) => sum + row.value, 0)
 
   return (
     <PageShell>
@@ -233,29 +254,38 @@ export function DashboardPageClient({
           )}
         </Panel>
 
-        <Panel title="Payment status" description="Paid vs overdue in view">
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={data.series} barGap={4}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis
-                dataKey="label"
-                stroke="var(--muted-foreground)"
-                fontSize={12}
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                stroke="var(--muted-foreground)"
-                fontSize={12}
-                tickLine={false}
-                axisLine={false}
-              />
-              <Tooltip content={<ChartTooltip />} />
-              <Legend />
-              <Bar dataKey="paid" name="Paid" fill={COLORS.success} radius={[4, 4, 0, 0]} />
-              <Bar dataKey="overdue" name="Overdue" fill={COLORS.error} radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+        <Panel title="Gender" description="Male vs female beneficiaries in view">
+          {genderTotal === 0 ? (
+            <p className="py-16 text-center text-sm text-muted-foreground">No gender data</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <PieChart>
+                <Pie
+                  data={data.by_gender}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={62}
+                  outerRadius={96}
+                  paddingAngle={2}
+                  stroke="var(--card)"
+                  strokeWidth={2}
+                >
+                  {data.by_gender.map((row) => (
+                    <Cell key={row.name} fill={GENDER_COLORS[row.name] || COLORS.info} />
+                  ))}
+                </Pie>
+                <Tooltip content={<GenderTooltip />} />
+                <Legend
+                  formatter={(value, entry) => {
+                    const count = Number(entry.payload?.value || 0)
+                    return `${value} (${count})`
+                  }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
         </Panel>
       </div>
 

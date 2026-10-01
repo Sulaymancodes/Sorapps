@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
+import { TablePagination, usePagedList } from '@/components/common/TablePagination'
 import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import type { Invoice } from '@/lib/types/crm'
 
@@ -34,6 +35,11 @@ export function InvoicesPageClient({ invoices }: { invoices: Invoice[] }) {
 
     return filtered
   }, [invoices, search, selectedStatus])
+
+  const { page, setPage, paged, total } = usePagedList(
+    filteredInvoices,
+    `${search}|${selectedStatus}`
+  )
 
   const statusColors: Record<string, string> = {
     draft: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200',
@@ -149,7 +155,7 @@ export function InvoicesPageClient({ invoices }: { invoices: Invoice[] }) {
               </tr>
             </thead>
             <tbody>
-              {filteredInvoices.map((invoice) => (
+              {paged.map((invoice) => (
                 <tr
                   key={invoice.id}
                   className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40"
@@ -186,6 +192,9 @@ export function InvoicesPageClient({ invoices }: { invoices: Invoice[] }) {
             </tbody>
           </table>
         </div>
+        {filteredInvoices.length > 0 && (
+          <TablePagination page={page} total={total} onPageChange={setPage} />
+        )}
         {filteredInvoices.length === 0 && (
           <div className="px-6 py-16 text-center">
             <p className="font-medium">No invoices found</p>

@@ -89,7 +89,7 @@ async function syncOneSaleDraft(draft: SaleDraft) {
           name: nc.name.trim(),
           email: nc.email.trim(),
           phone: nc.phone.trim(),
-          alternate_phone: nc.alternate_phone.trim(),
+          alternate_phone: '',
           nin: nc.nin,
           bvn: nc.bvn,
           address: '',

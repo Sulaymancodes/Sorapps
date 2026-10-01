@@ -73,6 +73,7 @@ export type ManagementDashboard = {
     collection_rate: string
   }
   series: { label: string; revenue: number; collected: number; paid: number; overdue: number }[]
+  by_gender: { name: string; value: number }[]
   by_payment_status: { name: string; value: number }[]
   by_activation_status: { name: string; value: number }[]
   top_products: { name: string; value: number }[]
@@ -534,12 +535,25 @@ export async function getManagementDashboard(
 
   const customerTotals: Record<string, { name: string; value: number }> = {}
   const stateTotals: Record<string, number> = {}
+  const genderCounts: Record<string, number> = { Male: 0, Female: 0 }
+  const countedGenders = new Set<string>()
   for (const row of filtered) {
     const cid = row.customer.id
     if (!customerTotals[cid]) customerTotals[cid] = { name: row.customer.name, value: 0 }
     customerTotals[cid].value += row.sale.totalAmount
     const st = row.customer.state || 'Unknown'
     stateTotals[st] = (stateTotals[st] || 0) + row.sale.totalAmount
+    if (!countedGenders.has(cid)) {
+      countedGenders.add(cid)
+      const gender = (row.customer.gender || '').trim()
+      if (gender === 'Male' || gender === 'Female') {
+        genderCounts[gender] += 1
+      } else if (gender) {
+        genderCounts[gender] = (genderCounts[gender] || 0) + 1
+      } else {
+        genderCounts.Unspecified = (genderCounts.Unspecified || 0) + 1
+      }
+    }
   }
 
   const recent = filtered.slice(0, 12).map((row) => {
@@ -583,6 +597,14 @@ export async function getManagementDashboard(
         periodRevenue > 0 ? ((periodCollected / periodRevenue) * 100).toFixed(1) : '0.0',
     },
     series,
+    by_gender: Object.entries(genderCounts)
+      .filter(([, value]) => value > 0)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => {
+        const order = (name: string) =>
+          name === 'Male' ? 0 : name === 'Female' ? 1 : 2
+        return order(a.name) - order(b.name)
+      }),
     by_payment_status: Object.entries(statusCounts).map(([name, value]) => ({ name, value })),
     by_activation_status: Object.entries(actCounts).map(([name, value]) => ({ name, value })),
     top_products: Object.values(productTotals)

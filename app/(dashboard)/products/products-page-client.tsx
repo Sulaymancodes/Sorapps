@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
+import { TablePagination, usePagedList } from '@/components/common/TablePagination'
 import { formatCurrency } from '@/lib/utils/formatting'
 import type { Product } from '@/lib/types/crm'
 
@@ -37,6 +38,11 @@ export function ProductsPageClient({ products }: { products: Product[] }) {
     if (selectedBrand) filtered = filtered.filter((p) => p.brand === selectedBrand)
     return filtered
   }, [products, search, selectedCategory, selectedBrand])
+
+  const { page, setPage, paged, total } = usePagedList(
+    filteredProducts,
+    `${search}|${selectedCategory}|${selectedBrand}`
+  )
 
   const stats = useMemo(
     () => ({
@@ -149,7 +155,7 @@ export function ProductsPageClient({ products }: { products: Product[] }) {
               </tr>
             </thead>
             <tbody>
-              {filteredProducts.map((product) => {
+              {paged.map((product) => {
                 const margin =
                   product.price > 0 ? ((product.price - product.cost) / product.price) * 100 : 0
                 let stockStatus = 'in-stock'
@@ -211,6 +217,9 @@ export function ProductsPageClient({ products }: { products: Product[] }) {
             </tbody>
           </table>
         </div>
+        {filteredProducts.length > 0 && (
+          <TablePagination page={page} total={total} onPageChange={setPage} />
+        )}
         {filteredProducts.length === 0 && (
           <div className="px-6 py-16 text-center">
             <p className="font-medium">

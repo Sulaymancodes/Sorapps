@@ -13,11 +13,13 @@ export function SaleCreatedModal({
   invoiceId,
   unlockPin,
   activationWarning,
+  showFinanceLinks = true,
 }: {
   saleId: string
   invoiceId?: string | null
   unlockPin?: string | null
   activationWarning?: string | null
+  showFinanceLinks?: boolean
 }) {
   const router = useRouter()
   const [open, setOpen] = useState(true)
@@ -123,6 +125,8 @@ export function SaleCreatedModal({
 
         <div className="mt-6 flex flex-wrap gap-2">
           <Button onClick={dismiss}>Continue</Button>
+          {showFinanceLinks ? (
+            <>
           <Link
             href="/invoices"
             onClick={dismiss}
@@ -137,6 +141,8 @@ export function SaleCreatedModal({
           >
             Record payment
           </Link>
+            </>
+          ) : null}
         </div>
       </div>
     </div>,

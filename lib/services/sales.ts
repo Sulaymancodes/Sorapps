@@ -1,7 +1,9 @@
 import { desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import {
+  activationCodes,
   customers,
+  deviceUnlocks,
   installments,
   inventoryMovements,
   invoiceItems,
@@ -11,9 +13,10 @@ import {
   saleItems,
   sales,
   payments,
+  warrantyClaims,
   warranties,
 } from '@/lib/db/schema'
-import { createCustomer, getCustomer } from '@/lib/services/customers'
+import { createCustomer, getCustomer, updateCustomer } from '@/lib/services/customers'
 import type {
   Customer,
   Installment,
@@ -181,6 +184,68 @@ export async function listSales(): Promise<Sale[]> {
   return saleRows.map((row) => mapSale(row, itemsBySale.get(row.id) ?? []))
 }
 
+export type SaleEditLine = {
+  product_id: string
+  quantity: number
+  serial_number: string
+}
+
+export type SaleForEdit = {
+  sale: Sale
+  customer: Customer
+  items: SaleEditLine[]
+}
+
+export async function getSaleForEdit(id: string): Promise<SaleForEdit | null> {
+  const saleId = id.trim()
+  if (!saleId) return null
+
+  const [saleRow] = await db.select().from(sales).where(eq(sales.id, saleId)).limit(1)
+  if (!saleRow) return null
+
+  const [customer, itemRows, warrantyRows] = await Promise.all([
+    getCustomer(saleRow.customerId),
+    db.select().from(saleItems).where(eq(saleItems.saleId, saleId)),
+    db.select().from(warranties).where(eq(warranties.saleId, saleId)),
+  ])
+  if (!customer) return null
+
+  const serialsByProduct = new Map<string, string[]>()
+  for (const row of warrantyRows) {
+    const list = serialsByProduct.get(row.productId) ?? []
+    if (row.serialNumber?.trim()) list.push(row.serialNumber.trim())
+    serialsByProduct.set(row.productId, list)
+  }
+
+  const mappedItems: SaleItem[] = itemRows.map((item) => ({
+    product_id: item.productId,
+    quantity: item.quantity,
+    unit_price: item.unitPrice,
+    total: item.total,
+  }))
+
+  const items: SaleEditLine[] =
+    itemRows.length > 0
+      ? itemRows.map((item) => ({
+          product_id: item.productId,
+          quantity: item.quantity,
+          serial_number: (serialsByProduct.get(item.productId) || []).join(', '),
+        }))
+      : [
+          {
+            product_id: '',
+            quantity: 1,
+            serial_number: warrantyRows.map((w) => w.serialNumber).filter(Boolean).join(', '),
+          },
+        ]
+
+  return {
+    sale: mapSale(saleRow, mappedItems),
+    customer,
+    items,
+  }
+}
+
 export async function listPaymentSchedules(): Promise<PaymentSchedule[]> {
   const scheduleRows = await db.select().from(paymentSchedules)
   if (!scheduleRows.length) return []
@@ -330,6 +395,18 @@ export async function listPaymentReminders(
   }
 
   return reminders
+}
+
+function parseLineSerials(raw: string | undefined, qty: number): string[] {
+  const parts = parseDeviceSerials(raw)
+  if (parts.length === 0) {
+    throw new Error('Enter a device serial number for every unit')
+  }
+  if (parts.length === 1 && qty === 1) return parts
+  if (parts.length === qty) return parts
+  throw new Error(
+    `Serial count must match quantity (${qty}). Separate multiple serials with commas.`
+  )
 }
 
 export async function createSale(
@@ -788,18 +865,6 @@ export async function createSale(
       existingWarranties.map((w) => serialLookupKey(w.serialNumber)).filter(Boolean)
     )
 
-    const parseLineSerials = (raw: string | undefined, qty: number): string[] => {
-      const parts = parseDeviceSerials(raw)
-      if (parts.length === 0) {
-        throw new Error('Enter a device serial number for every unit')
-      }
-      if (parts.length === 1 && qty === 1) return parts
-      if (parts.length === qty) return parts
-      throw new Error(
-        `Serial count must match quantity (${qty}). Separate multiple serials with commas.`
-      )
-    }
-
     const incomingSerials: string[] = []
     for (const line of input.items) {
       const qty = Math.max(1, Math.floor(line.quantity))
@@ -883,6 +948,396 @@ export async function createSale(
         }))
       ),
     }
+  })
+}
+
+export async function updateSale(
+  id: string,
+  input: SaleInput
+): Promise<{ sale: Sale }> {
+  const saleId = id.trim()
+  if (!saleId) throw new Error('Sale id is required')
+  if (!input.items.length) throw new Error('Add at least one product')
+  if (!input.new_customer) throw new Error('Customer details are required')
+  if (!input.site_photo_url?.trim()) throw new Error('Keep or replace the unit photo')
+  if (
+    !input.site_gps ||
+    !Number.isFinite(input.site_gps.latitude) ||
+    !Number.isFinite(input.site_gps.longitude)
+  ) {
+    throw new Error('GPS is missing on this sale — recapture with a unit photo')
+  }
+
+  const costToEndUser = Math.max(0, Math.round(Number(input.cost_to_end_user_ngn) || 0))
+  if (costToEndUser <= 0) {
+    throw new Error('Enter cost to end user (NGN)')
+  }
+
+  const incomingSerials: string[] = []
+  for (const line of input.items) {
+    const qty = Math.max(1, Math.floor(line.quantity))
+    incomingSerials.push(...parseLineSerials(line.serial_number, qty))
+  }
+
+  const [existingSale] = await db.select().from(sales).where(eq(sales.id, saleId)).limit(1)
+  if (!existingSale) throw new Error('Sale not found')
+
+  await updateCustomer(existingSale.customerId, {
+    ...input.new_customer,
+    email: input.new_customer.email || '',
+    phone: input.new_customer.phone || '',
+    credit_limit: input.new_customer.credit_limit ?? 0,
+  })
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx.select().from(sales).where(eq(sales.id, saleId)).limit(1)
+    if (!existing) throw new Error('Sale not found')
+    const customerId = existing.customerId
+
+    if (
+      input.payment_type !== existing.paymentType &&
+      existing.amountPaid > 0
+    ) {
+      throw new Error(
+        'Payment type cannot be changed after money has been collected on this sale'
+      )
+    }
+
+    const gpsCheck = evaluateDeploymentArea(input.site_gps.latitude, input.site_gps.longitude, {
+      state: input.new_customer!.state,
+      lga: input.new_customer!.lga || '',
+    })
+
+    const priorGpsRows = await tx
+      .select({
+        id: sales.id,
+        latitude: sales.latitude,
+        longitude: sales.longitude,
+      })
+      .from(sales)
+    for (const prior of priorGpsRows) {
+      if (prior.id === saleId) continue
+      if (prior.latitude == null || prior.longitude == null) continue
+      if (
+        sameGpsPoint(
+          input.site_gps.latitude,
+          input.site_gps.longitude,
+          prior.latitude,
+          prior.longitude
+        )
+      ) {
+        throw new Error(
+          `Site GPS matches an existing installation (${prior.id}). Move a few meters and recapture.`
+        )
+      }
+    }
+
+    const oldItems = await tx.select().from(saleItems).where(eq(saleItems.saleId, saleId))
+    const oldQtyByProduct = new Map<string, number>()
+    for (const item of oldItems) {
+      oldQtyByProduct.set(
+        item.productId,
+        (oldQtyByProduct.get(item.productId) || 0) + item.quantity
+      )
+    }
+
+    const newQtyByProduct = new Map<string, number>()
+    for (const line of input.items) {
+      const qty = Math.max(1, Math.floor(line.quantity))
+      newQtyByProduct.set(line.product_id, (newQtyByProduct.get(line.product_id) || 0) + qty)
+    }
+
+    const productIds = Array.from(
+      new Set([...oldQtyByProduct.keys(), ...newQtyByProduct.keys()])
+    )
+    const productRows = await tx.select().from(products).where(inArray(products.id, productIds))
+    const productMap = new Map(productRows.map((p) => [p.id, p]))
+
+    for (const [productId, qty] of newQtyByProduct) {
+      const product = productMap.get(productId)
+      if (!product) throw new Error(`Product ${productId} not found`)
+      const alreadyOnSale = oldQtyByProduct.get(productId) || 0
+      if (product.stock + alreadyOnSale < qty) {
+        throw new Error(
+          `Insufficient stock for ${product.name}. Available: ${product.stock + alreadyOnSale} ${product.unit}, requested: ${qty}`
+        )
+      }
+    }
+
+    const items: SaleItem[] = input.items.map((line) => {
+      const product = productMap.get(line.product_id)!
+      const quantity = Math.max(1, Math.floor(line.quantity))
+      return {
+        product_id: product.id,
+        quantity,
+        unit_price: product.price,
+        total: product.price * quantity,
+      }
+    })
+
+    const subtotal = items.reduce((sum, item) => sum + item.total, 0)
+    const discount_percent = Math.min(100, Math.max(0, input.discount_percent || 0))
+    const afterDiscount = subtotal - (subtotal * discount_percent) / 100
+    const transport_cost = Math.max(0, Math.round(input.transport_cost || 0))
+    const total_amount = Math.round(afterDiscount + transport_cost)
+    const cost = items.reduce((sum, item) => {
+      const product = productMap.get(item.product_id)
+      return sum + (product?.cost || 0) * item.quantity
+    }, 0)
+    const profit = total_amount - cost - transport_cost
+    const payment_type = input.payment_type
+    const payment_method = input.payment_method || existing.paymentMethod || 'cash'
+    const amountPaid = existing.amountPaid
+    const now = new Date()
+
+    let installment_interval_days = existing.installmentIntervalDays
+    let plan_end_date = existing.planEndDate
+    let installment_weeks = existing.installmentWeeks
+    if (payment_type === 'installment') {
+      const interval = Math.round(Number(input.installment_interval_days || installment_interval_days || 7))
+      if (!isValidIntervalDays(interval)) {
+        throw new Error('Payment interval must be a whole number of days between 1 and 365')
+      }
+      installment_interval_days = interval
+      if (input.plan_end_date?.trim()) {
+        const parsedEnd = parseDateInput(input.plan_end_date)
+        if (Number.isNaN(parsedEnd.getTime())) throw new Error('Invalid plan end date')
+        plan_end_date = parsedEnd
+      }
+      if (plan_end_date) {
+        const startDay = startOfLocalDay(existing.date)
+        const spanDays = Math.round((plan_end_date.getTime() - startDay.getTime()) / 86400000)
+        installment_weeks = Math.max(1, Math.ceil(spanDays / 7))
+      }
+    } else {
+      installment_interval_days = null
+      plan_end_date = null
+      installment_weeks = null
+    }
+
+    const nextStatus: SaleStatus =
+      existing.status === 'cancelled' || existing.status === 'completed'
+        ? (existing.status as SaleStatus)
+        : amountPaid >= total_amount
+          ? 'paid'
+          : amountPaid > 0
+            ? 'partial'
+            : 'pending_payment'
+
+    const existingWarranties = await tx.select().from(warranties).where(eq(warranties.saleId, saleId))
+    const otherWarranties = await tx
+      .select({ id: warranties.id, serialNumber: warranties.serialNumber, saleId: warranties.saleId })
+      .from(warranties)
+    const usedSerials = new Set(
+      otherWarranties
+        .filter((w) => w.saleId !== saleId)
+        .map((w) => serialLookupKey(w.serialNumber))
+        .filter(Boolean)
+    )
+    for (const serial of incomingSerials) {
+      const key = serialLookupKey(serial)
+      if (!key) throw new Error('Enter a device serial number for every unit')
+      if (usedSerials.has(key)) {
+        throw new Error(soldSerialMessage({ serial, sale_id: '', customer_id: '', customer_name: '' }))
+      }
+      usedSerials.add(key)
+    }
+
+    const oldUnpaid = Math.max(0, existing.totalAmount - amountPaid)
+    const newUnpaid = Math.max(0, total_amount - amountPaid)
+
+    await tx
+      .update(sales)
+      .set({
+        paymentType: payment_type,
+        paymentMethod: payment_method,
+        installmentWeeks: installment_weeks,
+        installmentIntervalDays: installment_interval_days,
+        planEndDate: plan_end_date,
+        totalAmount: total_amount,
+        discountPercent: discount_percent,
+        transportCost: transport_cost,
+        profit,
+        notes:
+          input.notes.trim() ||
+          existing.notes ||
+          (payment_type === 'full' ? 'Full payment' : 'Installment payment'),
+        daresTypeOfPayment: (input.dares_type_of_payment || existing.daresTypeOfPayment || '').trim(),
+        daresPaymentPlan: (input.dares_payment_plan || existing.daresPaymentPlan || '').trim(),
+        retailCostNgn: Math.max(0, Math.round(Number(input.retail_cost_ngn) || total_amount)),
+        costToEndUserNgn: costToEndUser,
+        downpaymentAmountNgn: Math.max(0, Math.round(Number(input.downpayment_amount_ngn) || 0)),
+        latitude: input.site_gps.latitude,
+        longitude: input.site_gps.longitude,
+        gpsCapturedAt: new Date(input.site_gps.captured_at),
+        gpsLocked: true,
+        gpsOutOfArea: gpsCheck.out_of_area,
+        sitePhotoUrl: input.site_photo_url.trim(),
+        status: nextStatus,
+      })
+      .where(eq(sales.id, saleId))
+
+    await tx.delete(saleItems).where(eq(saleItems.saleId, saleId))
+    await tx.insert(saleItems).values(
+      items.map((item, idx) => ({
+        id: `${saleId}-L${idx + 1}`,
+        saleId,
+        productId: item.product_id,
+        quantity: item.quantity,
+        unitPrice: item.unit_price,
+        total: item.total,
+      }))
+    )
+
+    const [invoice] = await tx.select().from(invoices).where(eq(invoices.saleId, saleId)).limit(1)
+    if (invoice) {
+      await tx
+        .update(invoices)
+        .set({
+          totalAmount: total_amount,
+          paidAmount: Math.min(invoice.paidAmount, total_amount),
+          status:
+            amountPaid >= total_amount ? 'paid' : invoice.status === 'cancelled' ? 'cancelled' : 'sent',
+        })
+        .where(eq(invoices.id, invoice.id))
+      await tx.delete(invoiceItems).where(eq(invoiceItems.invoiceId, invoice.id))
+      await tx.insert(invoiceItems).values(
+        items.map((item, idx) => {
+          const product = productMap.get(item.product_id)!
+          return {
+            id: `${invoice.id}-L${idx + 1}`,
+            invoiceId: invoice.id,
+            productId: item.product_id,
+            description: product.name,
+            quantity: item.quantity,
+            unitPrice: item.unit_price,
+            total: item.total,
+          }
+        })
+      )
+    }
+
+    await tx
+      .update(paymentSchedules)
+      .set({
+        paymentType: payment_type,
+        installmentWeeks: installment_weeks,
+        installmentIntervalDays: installment_interval_days,
+        planEndDate: plan_end_date,
+        totalAmount: total_amount,
+      })
+      .where(eq(paymentSchedules.saleId, saleId))
+
+    const existingMovements = await tx.select({ id: inventoryMovements.id }).from(inventoryMovements)
+    let movCounter = Math.max(
+      0,
+      ...existingMovements.map((m) => Number(m.id.replace(/\D/g, '')) || 0)
+    )
+    const allProductIds = new Set([...oldQtyByProduct.keys(), ...newQtyByProduct.keys()])
+    for (const productId of allProductIds) {
+      const delta = (newQtyByProduct.get(productId) || 0) - (oldQtyByProduct.get(productId) || 0)
+      if (!delta) continue
+      movCounter += 1
+      await tx.insert(inventoryMovements).values({
+        id: `INV_MOV${String(movCounter).padStart(6, '0')}`,
+        productId,
+        type: delta > 0 ? 'out' : 'in',
+        quantity: Math.abs(delta),
+        reference: `${saleId}-EDIT`,
+        date: now,
+        notes: `Stock adjusted after editing ${saleId}`,
+      })
+      await tx
+        .update(products)
+        .set({
+          stock: delta > 0 ? sql`${products.stock} - ${delta}` : sql`${products.stock} + ${Math.abs(delta)}`,
+          updatedAt: now,
+        })
+        .where(eq(products.id, productId))
+    }
+
+    await tx
+      .update(customers)
+      .set({
+        totalPurchases: sql`GREATEST(0, ${customers.totalPurchases} - ${existing.totalAmount} + ${total_amount})`,
+        outstandingBalance: sql`GREATEST(0, ${customers.outstandingBalance} - ${oldUnpaid} + ${newUnpaid})`,
+      })
+      .where(eq(customers.id, customerId))
+
+    const warrantyIds = existingWarranties.map((w) => w.id)
+    const claimed =
+      warrantyIds.length > 0
+        ? await tx
+            .select({ warrantyId: warrantyClaims.warrantyId })
+            .from(warrantyClaims)
+            .where(inArray(warrantyClaims.warrantyId, warrantyIds))
+        : []
+    if (claimed.length && existingWarranties.length !== incomingSerials.length) {
+      throw new Error(
+        'This sale has warranty claims — product quantity cannot be changed. Edit serials only, or keep the same number of units.'
+      )
+    }
+
+    if (existingWarranties.length === incomingSerials.length) {
+      let cursor = 0
+      for (const item of items) {
+        for (let unit = 0; unit < item.quantity; unit += 1) {
+          const row = existingWarranties[cursor]
+          const serialNumber = incomingSerials[cursor] || row.serialNumber
+          await tx
+            .update(warranties)
+            .set({
+              productId: item.product_id,
+              customerId,
+              serialNumber,
+            })
+            .where(eq(warranties.id, row.id))
+          cursor += 1
+        }
+      }
+    } else {
+      await tx.delete(warranties).where(eq(warranties.saleId, saleId))
+      const allWty = await tx.select({ id: warranties.id }).from(warranties)
+      let wtyCounter = Math.max(0, ...allWty.map((w) => Number(w.id.replace(/\D/g, '')) || 0))
+      const warrantyRows: (typeof warranties.$inferInsert)[] = []
+      let serialCursor = 0
+      for (const item of items) {
+        for (let unit = 0; unit < item.quantity; unit += 1) {
+          wtyCounter += 1
+          const startDate = existing.date
+          const expiryDate = new Date(startDate)
+          expiryDate.setMonth(expiryDate.getMonth() + 24)
+          warrantyRows.push({
+            id: `WTY${String(wtyCounter).padStart(5, '0')}`,
+            saleId,
+            productId: item.product_id,
+            customerId,
+            serialNumber: incomingSerials[serialCursor] || '',
+            warrantyPeriodMonths: 24,
+            startDate,
+            expiryDate,
+            status: 'active',
+          })
+          serialCursor += 1
+        }
+      }
+      if (warrantyRows.length) await tx.insert(warranties).values(warrantyRows)
+    }
+
+    const firstSerial = incomingSerials[0]
+    if (firstSerial) {
+      await tx
+        .update(deviceUnlocks)
+        .set({ serialNumber: firstSerial })
+        .where(eq(deviceUnlocks.saleId, saleId))
+      await tx
+        .update(activationCodes)
+        .set({ deviceSerial: firstSerial })
+        .where(eq(activationCodes.saleId, saleId))
+    }
+
+    const [saleRow] = await tx.select().from(sales).where(eq(sales.id, saleId)).limit(1)
+    return { sale: mapSale(saleRow!, items) }
   })
 }
 

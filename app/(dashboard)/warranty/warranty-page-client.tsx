@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
+import { TablePagination, usePagedList } from '@/components/common/TablePagination'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -74,6 +75,11 @@ export function WarrantyPageClient({ warranties }: { warranties: WarrantyWithDet
       return matchesSearch && matchesStatus
     })
   }, [warranties, searchTerm, statusFilter])
+
+  const { page, setPage, paged, total } = usePagedList(
+    filtered,
+    `${searchTerm}|${statusFilter}`
+  )
 
   const stats = {
     total: warranties.length,
@@ -224,7 +230,7 @@ export function WarrantyPageClient({ warranties }: { warranties: WarrantyWithDet
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((warranty) => (
+                {paged.map((warranty) => (
                   <tr
                     key={warranty.id}
                     onClick={() => selectWarranty(warranty)}
@@ -258,6 +264,9 @@ export function WarrantyPageClient({ warranties }: { warranties: WarrantyWithDet
               </tbody>
             </table>
           </div>
+          {filtered.length > 0 && (
+            <TablePagination page={page} total={total} onPageChange={setPage} />
+          )}
           {filtered.length === 0 && (
             <div className="px-6 py-16 text-center">
               <p className="font-medium">

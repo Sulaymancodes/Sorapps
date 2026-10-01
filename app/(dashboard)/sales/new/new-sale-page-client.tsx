@@ -138,7 +138,7 @@ export function NewSalePageClient({
           </ul>
         </div>
       ) : null}
-      <SaleForm customers={catalog.customers} products={catalog.products} forcedGeo={geo} />
+      <SaleForm customers={catalog.customers} products={catalog.products} forcedGeo={geo} showMoney={isAdmin} />
     </PageShell>
   )
 }

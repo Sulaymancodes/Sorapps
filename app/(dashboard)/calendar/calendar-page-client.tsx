@@ -124,7 +124,13 @@ function dueLabel(daysUntil: number) {
   return `Due in ${daysUntil} days`
 }
 
-export function CalendarPageClient({ events }: { events: CalendarEvent[] }) {
+export function CalendarPageClient({
+  events,
+  showMoney = true,
+}: {
+  events: CalendarEvent[]
+  showMoney?: boolean
+}) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [customerFilter, setCustomerFilter] = useState('')
@@ -264,7 +270,7 @@ export function CalendarPageClient({ events }: { events: CalendarEvent[] }) {
           {
             label: 'Overdue',
             value: String(stats.overdueCount),
-            sub: formatCurrency(stats.overdueAmount),
+            sub: showMoney ? formatCurrency(stats.overdueAmount) : '',
             tone: 'text-red-700 dark:text-red-400',
             onClick: () => setStatusFilter(statusFilter === 'overdue' ? 'all' : 'overdue'),
             active: statusFilter === 'overdue',
@@ -272,7 +278,7 @@ export function CalendarPageClient({ events }: { events: CalendarEvent[] }) {
           {
             label: 'Due today',
             value: String(stats.dueTodayCount),
-            sub: formatCurrency(stats.dueTodayAmount),
+            sub: showMoney ? formatCurrency(stats.dueTodayAmount) : '',
             tone: 'text-amber-700 dark:text-amber-400',
             onClick: () => setStatusFilter(statusFilter === 'due_today' ? 'all' : 'due_today'),
             active: statusFilter === 'due_today',
@@ -280,7 +286,7 @@ export function CalendarPageClient({ events }: { events: CalendarEvent[] }) {
           {
             label: 'Next 7 days',
             value: String(stats.thisWeekCount),
-            sub: formatCurrency(stats.thisWeekAmount),
+            sub: showMoney ? formatCurrency(stats.thisWeekAmount) : '',
             tone: 'text-sky-700 dark:text-sky-400',
             onClick: () => setStatusFilter(statusFilter === 'this_week' ? 'all' : 'this_week'),
             active: statusFilter === 'this_week',
@@ -288,7 +294,7 @@ export function CalendarPageClient({ events }: { events: CalendarEvent[] }) {
           {
             label: 'All open',
             value: String(stats.total),
-            sub: formatCurrency(stats.totalExpected),
+            sub: showMoney ? formatCurrency(stats.totalExpected) : '',
             tone: 'text-foreground',
             onClick: () => setStatusFilter('all'),
             active: statusFilter === 'all' && !selectedDay,
@@ -481,7 +487,7 @@ export function CalendarPageClient({ events }: { events: CalendarEvent[] }) {
                   >
                     <option value="due_asc">Due date (soonest)</option>
                     <option value="due_desc">Due date (latest)</option>
-                    <option value="amount_desc">Amount (highest)</option>
+                    {showMoney ? <option value="amount_desc">Amount (highest)</option> : null}
                     <option value="customer">Customer name</option>
                   </select>
                 </div>
@@ -521,9 +527,11 @@ export function CalendarPageClient({ events }: { events: CalendarEvent[] }) {
                       Create installment sale
                     </Button>
                   </Link>
+                  {showMoney ? (
                   <Link href="/payments">
                     <Button variant="outline">View payments</Button>
                   </Link>
+                  ) : null}
                 </div>
               </div>
             </Panel>
@@ -544,13 +552,15 @@ export function CalendarPageClient({ events }: { events: CalendarEvent[] }) {
               <Panel
                 key={bucket}
                 title={BUCKET_META[bucket].label}
-                description={`${items.length} · ${BUCKET_META[bucket].description} · ${formatCurrency(
-                  items.reduce((s, e) => s + e.amount, 0)
-                )}`}
+                description={`${items.length} · ${BUCKET_META[bucket].description}${
+                  showMoney
+                    ? ` · ${formatCurrency(items.reduce((s, e) => s + e.amount, 0))}`
+                    : ''
+                }`}
               >
                 <div className="space-y-3">
                   {items.map((event) => (
-                    <EventCard key={event.id} event={event} />
+                    <EventCard key={event.id} event={event} showMoney={showMoney} />
                   ))}
                 </div>
               </Panel>
@@ -562,7 +572,7 @@ export function CalendarPageClient({ events }: { events: CalendarEvent[] }) {
   )
 }
 
-function EventCard({ event }: { event: CalendarEvent }) {
+function EventCard({ event, showMoney }: { event: CalendarEvent; showMoney: boolean }) {
   return (
     <div className={cn('rounded-xl border p-4', bucketClasses(event.bucket))}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -593,8 +603,8 @@ function EventCard({ event }: { event: CalendarEvent }) {
               {event.customer_city ? ` · ${event.customer_city}` : ''}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {event.paid_installments}/{event.total_weeks} weeks paid · Schedule outstanding{' '}
-              {formatCurrency(event.schedule_outstanding)}
+              {event.paid_installments}/{event.total_weeks} weeks paid
+              {showMoney ? ` · Schedule outstanding ${formatCurrency(event.schedule_outstanding)}` : ''}
             </p>
             <div className="mt-2 flex flex-wrap gap-3 text-xs">
               {event.customer_phone && (
@@ -615,6 +625,7 @@ function EventCard({ event }: { event: CalendarEvent }) {
                   {event.customer_email}
                 </a>
               )}
+              {showMoney ? (
               <Link
                 href="/payments"
                 className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
@@ -622,13 +633,16 @@ function EventCard({ event }: { event: CalendarEvent }) {
                 <ShoppingCart className="size-3" />
                 Payments
               </Link>
+              ) : null}
             </div>
           </div>
         </div>
         <div className="shrink-0 text-left sm:text-right">
+          {showMoney ? (
           <p className="font-display text-lg font-semibold tabular-nums">
             {formatCurrency(event.amount)}
           </p>
+          ) : null}
           <p className="mt-0.5 text-xs font-medium">{dueLabel(event.daysUntil)}</p>
           <p className="text-xs text-muted-foreground">{formatDate(new Date(event.dueDate))}</p>
         </div>

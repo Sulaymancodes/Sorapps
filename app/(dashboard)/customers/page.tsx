@@ -11,7 +11,7 @@ export default async function CustomersPage() {
     const scoped = customers.filter((c) =>
       matchesAgentTerritory({ state: c.state, lga: c.lga }, access)
     )
-    return <CustomersPageClient customers={scoped} canDelete={access.isAdmin} />
+    return <CustomersPageClient customers={scoped} canDelete={access.isAdmin} showMoney={access.isAdmin} />
   } catch (error) {
     if (isNextRedirect(error)) throw error
     return <CustomersPageClient customers={[]} />

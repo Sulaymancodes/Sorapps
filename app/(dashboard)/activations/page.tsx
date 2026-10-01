@@ -91,6 +91,7 @@ export default async function ActivationsPage() {
         smsConfigured={Boolean(process.env.BULK_SMS_TOKEN)}
         beebeeConfigured={isBeebeeJumpConfigured()}
         baseValidityDays={getPaygoBaseValidityDays()}
+        showMoney={access.isAdmin}
       />
     )
   } catch (error) {

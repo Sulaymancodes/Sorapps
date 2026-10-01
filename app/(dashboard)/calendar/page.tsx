@@ -22,6 +22,7 @@ export default async function CalendarPage() {
           ...event,
           dueDate: event.dueDate.toISOString(),
         }))}
+        showMoney={access.isAdmin}
       />
     )
   } catch (error) {

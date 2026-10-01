@@ -166,6 +166,8 @@ export type DuplicateScanInput = {
   /** Device serial(s) to check — comma-separated or array */
   serial?: string | string[]
   exclude_id?: string
+  /** Skip warranties tied to this sale (admin editing an existing sale). */
+  exclude_sale_id?: string
 }
 
 export type DuplicateScanResult = {
@@ -283,10 +285,12 @@ export async function scanBeneficiaryDuplicates(
       .select({
         serialNumber: warranties.serialNumber,
         customerId: warranties.customerId,
+        saleId: warranties.saleId,
       })
       .from(warranties)
     const customerById = new Map(candidates.map((c) => [c.id, c]))
     for (const w of warrantyRows) {
+      if (input.exclude_sale_id && w.saleId === input.exclude_sale_id) continue
       const serial = serialLookupKey(w.serialNumber || '')
       if (!serial || !serials.includes(serial)) continue
       const c = customerById.get(w.customerId)

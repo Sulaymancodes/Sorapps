@@ -1,20 +1,17 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Camera, Lock, MapPin, RefreshCw, TriangleAlert, X } from 'lucide-react'
+import { Camera, RefreshCw, TriangleAlert, Upload, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
 import { Panel } from '@/components/common/Panel'
-import { getR2StatusAction } from '@/app/actions/uploads'
-import { evaluateDeploymentArea, formatGpsCoord } from '@/lib/utils/gps'
+import { evaluateDeploymentArea } from '@/lib/utils/gps'
 import { savePhotoOnThisPhone } from '@/lib/offline/save-phone-photo'
-import { SUBSIDY_LABELS, type SubsidyLevel } from '@/lib/constants/deployment-areas'
-import { cn } from '@/lib/utils'
 import type { SaleSiteGpsInput } from '@/lib/types/crm'
 
 type SiteVerificationProps = {
   gps: SaleSiteGpsInput | null
   photoFile: File | null
+  existingPhotoUrl?: string
   expectedState?: string
   expectedLga?: string
   onGpsChange: (gps: SaleSiteGpsInput | null) => void
@@ -83,33 +80,22 @@ function readLiveGps(expectedState?: string, expectedLga?: string): Promise<Sale
 export function SiteVerificationPanel({
   gps,
   photoFile,
+  existingPhotoUrl,
   expectedState,
   expectedLga,
   onGpsChange,
   onPhotoChange,
   error,
 }: SiteVerificationProps) {
-  const fileRef = useRef<HTMLInputElement>(null)
+  const cameraRef = useRef<HTMLInputElement>(null)
+  const uploadRef = useRef<HTMLInputElement>(null)
   const pendingGpsRef = useRef<Promise<SaleSiteGpsInput> | null>(null)
   const previewUrlRef = useRef<string | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
-  const [r2Ready, setR2Ready] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      setR2Ready(null)
-      return
-    }
-    void getR2StatusAction()
-      .then((result) => {
-        if (result.success) setR2Ready(result.data.configured)
-        else setR2Ready(null)
-      })
-      .catch(() => setR2Ready(null))
-  }, [])
+  const [clearedExisting, setClearedExisting] = useState(false)
 
   useEffect(() => {
     if (previewUrlRef.current) {
@@ -163,7 +149,13 @@ export function SiteVerificationPanel({
   const openCameraWithGps = () => {
     setLocalError(null)
     pendingGpsRef.current = readLiveGps(expectedState, expectedLga)
-    fileRef.current?.click()
+    cameraRef.current?.click()
+  }
+
+  const openUploadWithGps = () => {
+    setLocalError(null)
+    pendingGpsRef.current = readLiveGps(expectedState, expectedLga)
+    uploadRef.current?.click()
   }
 
   const attachPhotoAndGps = async (file: File) => {
@@ -195,126 +187,85 @@ export function SiteVerificationPanel({
       setStatus(null)
     } finally {
       setBusy(false)
-      if (fileRef.current) fileRef.current.value = ''
+      if (cameraRef.current) cameraRef.current.value = ''
+      if (uploadRef.current) uploadRef.current.value = ''
     }
   }
 
-  const recaptureGpsOnly = async () => {
-    setLocalError(null)
-    setBusy(true)
-    setStatus('Recapturing GPS…')
-    try {
-      const next = await readLiveGps(expectedState, expectedLga)
-      onGpsChange(next)
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : 'GPS recapture failed')
-    } finally {
-      setBusy(false)
-      setStatus(null)
-    }
-  }
+  const shownPhotoUrl = previewUrl || (!clearedExisting ? existingPhotoUrl : undefined)
 
   const clearPhoto = () => {
     onPhotoChange(null)
+    setClearedExisting(true)
     setLocalError(null)
   }
 
   return (
-    <Panel
-      title="Unit GPS & photo"
-      description="Photo stays on this form until you submit — then it uploads. A copy is also saved on this phone. Offline, it is stored in the sale draft with GPS."
-    >
-      <div className="space-y-5">
-        <div className="rounded-xl border border-border/70 bg-secondary/15 p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <Label>Unit photo + GPS</Label>
-              <p className="text-xs text-muted-foreground">
-                Attach photo now; GPS locks with it. A copy stays on this phone. Upload runs only
-                when you create the sale.
+    <Panel title="Unit photo">
+      <div className="space-y-3">
+        <input
+          ref={cameraRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) void attachPhotoAndGps(file)
+          }}
+        />
+        <input
+          ref={uploadRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) void attachPhotoAndGps(file)
+          }}
+        />
+
+        {shownPhotoUrl ? (
+          <div className="overflow-hidden rounded-xl border border-border/70 bg-secondary/15">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={shownPhotoUrl}
+              alt="Unit photo"
+              className="max-h-56 w-full object-cover"
+            />
+            <div className="flex items-center justify-between gap-2 px-3 py-2">
+              <p className="truncate text-xs text-muted-foreground">
+                {busy ? status || 'Working…' : previewUrl ? 'Unit photo attached' : 'Saved unit photo'}
               </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="default"
-                size="sm"
-                className="gap-1.5"
-                disabled={busy}
-                onClick={openCameraWithGps}
-              >
-                {busy ? (
-                  <>
-                    <RefreshCw className="size-3.5 animate-spin" />
-                    Working…
-                  </>
-                ) : (
-                  <>
-                    <Camera className="size-3.5" />
-                    {photoFile ? 'Retake photo + GPS' : 'Take photo + GPS'}
-                  </>
-                )}
-              </Button>
-              {gps?.locked && (
+              <div className="flex gap-1">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="gap-1.5"
+                  className="h-8 gap-1.5"
                   disabled={busy}
-                  onClick={() => void recaptureGpsOnly()}
+                  onClick={openCameraWithGps}
                 >
-                  <RefreshCw className="size-3.5" />
-                  GPS only
+                  <Camera className="size-3.5" />
+                  Retake
                 </Button>
-              )}
-            </div>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) void attachPhotoAndGps(file)
-              }}
-            />
-          </div>
-
-          {r2Ready === false && (
-            <p className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
-              Cloudflare R2 is not configured yet. You can still attach a photo for now; submit will
-              fail until R2 env vars are set.
-            </p>
-          )}
-
-          {!expectedState?.trim() && (
-            <p className="mb-3 rounded-md border border-border/60 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
-              Select customer state (and LGA) first so GPS can be checked against the approved
-              deployment area.
-            </p>
-          )}
-
-          {status && <p className="mb-3 text-xs text-muted-foreground">{status}</p>}
-
-          {previewUrl ? (
-            <div className="overflow-hidden rounded-lg border border-border/60 bg-background">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={previewUrl}
-                alt="Unit capture preview"
-                className="max-h-56 w-full object-cover"
-              />
-              <div className="flex items-center justify-between gap-2 px-3 py-2">
-                <p className="truncate text-[11px] text-muted-foreground">
-                  Attached: {photoFile?.name || 'unit photo'} (copy saved on this phone)
-                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5"
+                  disabled={busy}
+                  onClick={openUploadWithGps}
+                >
+                  <Upload className="size-3.5" />
+                  Upload
+                </Button>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-7 gap-1 px-2 text-muted-foreground hover:text-destructive"
+                  className="h-8 gap-1 px-2 text-muted-foreground hover:text-destructive"
+                  disabled={busy}
                   onClick={clearPhoto}
                 >
                   <X className="size-3.5" />
@@ -322,80 +273,60 @@ export function SiteVerificationPanel({
                 </Button>
               </div>
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Stand at the unit, then take the photo — GPS locks automatically.
-            </p>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={openCameraWithGps}
+              className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-secondary/20 px-4 py-10 text-center transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:opacity-60"
+            >
+              {busy ? (
+                <RefreshCw className="size-10 animate-spin text-primary" />
+              ) : (
+                <Camera className="size-10 text-primary" />
+              )}
+              <span className="text-base font-medium">
+                {busy ? status || 'Working…' : 'Take photo of unit'}
+              </span>
+              {!busy && (
+                <span className="text-xs text-muted-foreground">Use device camera</span>
+              )}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={openUploadWithGps}
+              className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-secondary/20 px-4 py-10 text-center transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:opacity-60"
+            >
+              {busy ? (
+                <RefreshCw className="size-10 animate-spin text-primary" />
+              ) : (
+                <Upload className="size-10 text-primary" />
+              )}
+              <span className="text-base font-medium">
+                {busy ? status || 'Working…' : 'Upload photo'}
+              </span>
+              {!busy && (
+                <span className="text-xs text-muted-foreground">Choose from this device</span>
+              )}
+            </button>
+          </div>
+        )}
 
-        <div className="rounded-xl border border-border/70 bg-secondary/15 p-4">
-          <p className="mb-3 text-sm font-medium">GPS (locked with photo)</p>
-          {gps?.locked ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="rounded-lg bg-background/70 px-3 py-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Latitude
-                  </p>
-                  <p className="mt-0.5 font-mono text-sm tabular-nums">
-                    {formatGpsCoord(gps.latitude)}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-background/70 px-3 py-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Longitude
-                  </p>
-                  <p className="mt-0.5 font-mono text-sm tabular-nums">
-                    {formatGpsCoord(gps.longitude)}
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-primary">
-                  <Lock className="size-3" />
-                  Locked
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <MapPin className="size-3" />
-                  Captured {new Date(gps.captured_at).toLocaleString()}
-                </span>
-              </div>
-              {!gps.out_of_area && gps.deployment_area_name && (
-                <p className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-900 dark:text-emerald-200">
-                  Inside approved area: {gps.deployment_area_name}
-                  {gps.subsidy_level
-                    ? ` · ${SUBSIDY_LABELS[(gps.subsidy_level as SubsidyLevel) || 'none'] || gps.subsidy_level}`
-                    : ''}
-                  {expectedState ? ` · Sale state ${expectedState}` : ''}
-                  {expectedLga ? ` / ${expectedLga}` : ''}
-                </p>
-              )}
-              {gps.out_of_area && (
-                <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
-                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-                  <p>
-                    Out-of-area flag:{' '}
-                    {gps.out_of_area_reason ||
-                      'Coordinates are outside the approved deployment area for the selected subsidy zone.'}{' '}
-                    Retake on-site or confirm with a supervisor before saving.
-                  </p>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              GPS appears here after you take the unit photo.
+        {gps?.out_of_area && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            <p>
+              {gps.out_of_area_reason ||
+                'This photo was taken outside the approved deployment area.'}
             </p>
-          )}
-        </div>
+          </div>
+        )}
 
         {(localError || error) && (
-          <p
-            className={cn(
-              'rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive'
-            )}
-          >
+          <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {localError || error}
           </p>
         )}

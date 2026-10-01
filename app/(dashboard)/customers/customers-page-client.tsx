@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
+import { TablePagination, usePagedList } from '@/components/common/TablePagination'
 import { useOfflineSyncOptional } from '@/components/offline/offline-sync-context'
 import { deleteCustomerAction } from '@/app/actions/customers'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
@@ -19,9 +20,11 @@ import type { Customer } from '@/lib/types/crm'
 export function CustomersPageClient({
   customers,
   canDelete = false,
+  showMoney = true,
 }: {
   customers: Customer[]
   canDelete?: boolean
+  showMoney?: boolean
 }) {
   const router = useRouter()
   const offline = useOfflineSyncOptional()
@@ -82,6 +85,11 @@ export function CustomersPageClient({
 
     return filtered
   }, [customers, search, selectedState, selectedBusinessType])
+
+  const { page, setPage, paged, total } = usePagedList(
+    filteredCustomers,
+    `${search}|${selectedState}|${selectedBusinessType}`
+  )
 
   function handleDelete(customer: Customer) {
     setActionError(null)
@@ -208,14 +216,13 @@ export function CustomersPageClient({
                   'Business Type',
                   'Location',
                   'Contact',
-                  'Total Purchases',
-                  'Outstanding',
+                  ...(showMoney ? ['Total Purchases', 'Outstanding'] : []),
                   'Action',
-                ].map((h, i) => (
+                ].map((h) => (
                   <th
                     key={h}
                     className={`px-5 py-3.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground ${
-                      i === 4 || i === 5 ? 'text-right' : 'text-left'
+                      h === 'Total Purchases' || h === 'Outstanding' ? 'text-right' : 'text-left'
                     }`}
                   >
                     {h}
@@ -224,7 +231,7 @@ export function CustomersPageClient({
               </tr>
             </thead>
             <tbody>
-              {filteredCustomers.map((customer) => (
+              {paged.map((customer) => (
                 <tr
                   key={customer.id}
                   className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40"
@@ -266,6 +273,8 @@ export function CustomersPageClient({
                       </a>
                     </div>
                   </td>
+                  {showMoney && (
+                    <>
                   <td className="px-5 py-4 text-right font-medium tabular-nums">
                     {formatCurrency(customer.total_purchases)}
                   </td>
@@ -280,6 +289,8 @@ export function CustomersPageClient({
                       {formatCurrency(customer.outstanding_balance)}
                     </span>
                   </td>
+                    </>
+                  )}
                   <td className="px-5 py-4">
                     <div className="flex gap-2">
                       <Link href={`/customers/${customer.id}/edit`}>
@@ -307,6 +318,9 @@ export function CustomersPageClient({
             </tbody>
           </table>
         </div>
+        {filteredCustomers.length > 0 && (
+          <TablePagination page={page} total={total} onPageChange={setPage} />
+        )}
         {filteredCustomers.length === 0 && (
           <div className="px-6 py-16 text-center">
             <p className="font-medium">

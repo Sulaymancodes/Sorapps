@@ -4,10 +4,9 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { getSessionAccess, requireAdmin, requireSession } from '@/lib/auth-server'
 import { createCustomerDocuments } from '@/lib/services/documents'
-import { assertKycUploadsIfRequired } from '@/lib/services/org-settings'
 import { getCustomer } from '@/lib/services/customers'
 import { issueActivationForSale } from '@/lib/services/activations'
-import { createSale, deleteSale, getSaleUnlockPin } from '@/lib/services/sales'
+import { createSale, deleteSale, getSaleUnlockPin, updateSale } from '@/lib/services/sales'
 import { assertSerialsNotSold, findSoldSerials } from '@/lib/services/serials'
 import { attachUnlockPinToSale } from '@/lib/services/unlocks'
 import { parseDeviceSerials, type SoldSerialHit } from '@/lib/utils/serial'
@@ -171,9 +170,6 @@ export async function createSaleAction(
       parseDeviceSerials(item.serial_number)
     )
     await assertSerialsNotSold(serials)
-    await assertKycUploadsIfRequired(parsed.data.documents, {
-      customerId: parsed.data.customer_id?.trim() || undefined,
-    })
 
     const { documents, ...saleData } = parsed.data
     const result = await createSale({
@@ -265,16 +261,67 @@ export async function createSaleAction(
 }
 
 export async function checkSoldSerialsAction(
-  serials: string[]
+  serials: string[],
+  excludeSaleId?: string
 ): Promise<ActionResult<{ hits: SoldSerialHit[] }>> {
   await requireSession()
   try {
-    const hits = await findSoldSerials(serials)
+    const hits = await findSoldSerials(serials, excludeSaleId)
     return { success: true, data: { hits } }
   } catch (error) {
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to check serials',
+    }
+  }
+}
+
+export async function updateSaleAction(
+  id: string,
+  input: z.infer<typeof saleSchema>
+): Promise<ActionResult<{ sale: Sale }>> {
+  await requireAdmin()
+  const parsed = saleSchema.safeParse(input)
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+  }
+  if (!id?.trim()) return { success: false, error: 'Sale id is required' }
+
+  try {
+    const serials = parsed.data.items.flatMap((item) => parseDeviceSerials(item.serial_number))
+    await assertSerialsNotSold(serials, id)
+
+    const { documents: _documents, ...saleData } = parsed.data
+    const result = await updateSale(id, {
+      ...saleData,
+      customer_id: parsed.data.customer_id || undefined,
+      new_customer: parsed.data.new_customer
+        ? {
+            ...parsed.data.new_customer,
+            email: parsed.data.new_customer.email || '',
+            phone: parsed.data.new_customer.phone || '',
+            credit_limit: parsed.data.new_customer.credit_limit ?? 0,
+          }
+        : undefined,
+    })
+
+    revalidatePath('/sales')
+    revalidatePath(`/sales/${id}/edit`)
+    revalidatePath('/customers')
+    revalidatePath('/products')
+    revalidatePath('/inventory')
+    revalidatePath('/invoices')
+    revalidatePath('/payments')
+    revalidatePath('/dashboard')
+    revalidatePath('/warranty')
+    revalidatePath('/activations')
+    revalidatePath('/unlock')
+    revalidatePath('/reports')
+    return { success: true, data: result }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to update sale',
     }
   }
 }

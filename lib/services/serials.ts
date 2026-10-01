@@ -10,7 +10,10 @@ import {
 
 export type { SoldSerialHit }
 
-async function loadSoldSerialHits(wanted?: Set<string>): Promise<SoldSerialHit[]> {
+async function loadSoldSerialHits(
+  wanted?: Set<string>,
+  excludeSaleId?: string
+): Promise<SoldSerialHit[]> {
   const [warrantyRows, unlockRows] = await Promise.all([
     db
       .select({
@@ -42,6 +45,7 @@ async function loadSoldSerialHits(wanted?: Set<string>): Promise<SoldSerialHit[]
 
   for (const row of warrantyRows) {
     if (!row.serial?.trim()) continue
+    if (excludeSaleId && row.saleId === excludeSaleId) continue
     push({
       serial: row.serial.trim(),
       sale_id: row.saleId,
@@ -52,6 +56,7 @@ async function loadSoldSerialHits(wanted?: Set<string>): Promise<SoldSerialHit[]
 
   for (const row of unlockRows) {
     if (!row.saleId || !row.serial?.trim()) continue
+    if (excludeSaleId && row.saleId === excludeSaleId) continue
     push({
       serial: row.serial.trim(),
       sale_id: row.saleId,
@@ -63,17 +68,20 @@ async function loadSoldSerialHits(wanted?: Set<string>): Promise<SoldSerialHit[]
   return hits
 }
 
-export async function findSoldSerials(serials: string[]): Promise<SoldSerialHit[]> {
+export async function findSoldSerials(
+  serials: string[],
+  excludeSaleId?: string
+): Promise<SoldSerialHit[]> {
   const wanted = new Set(parseDeviceSerials(serials).map(serialLookupKey).filter(Boolean))
   if (!wanted.size) return []
-  return loadSoldSerialHits(wanted)
+  return loadSoldSerialHits(wanted, excludeSaleId)
 }
 
 export async function listAllSoldSerials(): Promise<SoldSerialHit[]> {
   return loadSoldSerialHits()
 }
 
-export async function assertSerialsNotSold(serials: string[]) {
+export async function assertSerialsNotSold(serials: string[], excludeSaleId?: string) {
   const parsed = parseDeviceSerials(serials)
   const seen = new Set<string>()
   for (const serial of parsed) {
@@ -85,6 +93,6 @@ export async function assertSerialsNotSold(serials: string[]) {
     seen.add(key)
   }
 
-  const hits = await findSoldSerials(parsed)
+  const hits = await findSoldSerials(parsed, excludeSaleId)
   if (hits[0]) throw new Error(soldSerialMessage(hits[0]))
 }

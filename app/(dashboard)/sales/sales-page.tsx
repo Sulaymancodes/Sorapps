@@ -3,16 +3,20 @@
 import { useMemo, useState, Fragment, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Plus, CreditCard, CalendarClock, Trash2 } from 'lucide-react'
+import { Plus, CreditCard, CalendarClock, Trash2, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
+import { SearchableSelect } from '@/components/common/SearchableSelect'
+import { TablePagination, usePagedList } from '@/components/common/TablePagination'
 import { deleteSaleAction } from '@/app/actions/sales'
 import { SaleCreatedModal } from '@/components/sales/SaleCreatedModal'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { useOfflineSyncOptional } from '@/components/offline/offline-sync-context'
+import { NIGERIAN_STATES } from '@/lib/constants/options'
+import { getLgasForState } from '@/lib/constants/lgas'
 import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import type {
   Customer,
@@ -65,6 +69,8 @@ export default function SalesPage({
   const [search, setSearch] = useState('')
   const [selectedStatus, setSelectedStatus] = useState('')
   const [selectedPaymentType, setSelectedPaymentType] = useState<PaymentType | ''>('')
+  const [selectedState, setSelectedState] = useState('')
+  const [selectedLga, setSelectedLga] = useState('')
   const [expandedSale, setExpandedSale] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -82,9 +88,23 @@ export default function SalesPage({
     return map
   }, [schedulesList])
 
+  const lgaOptions = useMemo(() => getLgasForState(selectedState), [selectedState])
+
+  const geoSales = useMemo(() => {
+    if (!selectedState) return sales
+    const stateKey = selectedState.trim().toLowerCase()
+    const lgaKey = selectedLga.trim().toLowerCase()
+    return sales.filter((s) => {
+      const customer = customers.get(s.customer_id)
+      if ((customer?.state || '').trim().toLowerCase() !== stateKey) return false
+      if (lgaKey && (customer?.lga || '').trim().toLowerCase() !== lgaKey) return false
+      return true
+    })
+  }, [sales, customers, selectedState, selectedLga])
+
   const stats = useMemo(() => {
-    const total_revenue = sales.reduce((sum, s) => sum + s.total_amount, 0)
-    const total_collected = sales.reduce((sum, s) => sum + s.amount_paid, 0)
+    const total_revenue = geoSales.reduce((sum, s) => sum + s.total_amount, 0)
+    const total_collected = geoSales.reduce((sum, s) => sum + s.amount_paid, 0)
     const by_status: Record<Sale['status'], number> = {
       pending_payment: 0,
       partial: 0,
@@ -93,24 +113,28 @@ export default function SalesPage({
       cancelled: 0,
     }
     const by_payment_type = { full: 0, installment: 0 }
-    sales.forEach((s) => {
+    geoSales.forEach((s) => {
       by_status[s.status]++
       by_payment_type[s.payment_type]++
     })
+    const geoSaleIds = new Set(geoSales.map((s) => s.id))
     const active_installments = schedulesList.filter(
-      (sch) => sch.payment_type === 'installment' && sch.paid_amount < sch.total_amount
+      (sch) =>
+        geoSaleIds.has(sch.sale_id) &&
+        sch.payment_type === 'installment' &&
+        sch.paid_amount < sch.total_amount
     ).length
 
     return {
       total_revenue,
       total_collected,
       outstanding: total_revenue - total_collected,
-      avg_sale_value: sales.length ? total_revenue / sales.length : 0,
+      avg_sale_value: geoSales.length ? total_revenue / geoSales.length : 0,
       by_status,
       by_payment_type,
       active_installments,
     }
-  }, [sales, schedulesList])
+  }, [geoSales, schedulesList])
 
   const statuses: Array<{ label: string; value: Sale['status'] }> = [
     { label: 'Pending Payment', value: 'pending_payment' },
@@ -121,7 +145,7 @@ export default function SalesPage({
   ]
 
   const filteredSales = useMemo(() => {
-    let filtered = sales
+    let filtered = geoSales
 
     if (search) {
       const q = search.toLowerCase()
@@ -155,7 +179,12 @@ export default function SalesPage({
     if (selectedPaymentType) filtered = filtered.filter((s) => s.payment_type === selectedPaymentType)
 
     return filtered
-  }, [search, selectedStatus, selectedPaymentType, sales, customers])
+  }, [search, selectedStatus, selectedPaymentType, geoSales, customers])
+
+  const { page, setPage, paged, total } = usePagedList(
+    filteredSales,
+    `${search}|${selectedStatus}|${selectedPaymentType}|${selectedState}|${selectedLga}`
+  )
 
   const statusColors: Record<Sale['status'], string> = {
     pending_payment: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
@@ -194,7 +223,9 @@ export default function SalesPage({
         description={
           sales.length === 0
             ? 'No sales yet — add customers and products, then create your first sale'
-            : 'Every sale is either full payment or weekly installment'
+            : isAdmin
+              ? 'Every sale is either full payment or weekly installment'
+              : undefined
         }
         actions={
           <div className="flex flex-wrap gap-2">
@@ -235,12 +266,15 @@ export default function SalesPage({
       {createdId && (
         <SaleCreatedModal
           saleId={createdId}
-          invoiceId={createdInvoice}
+          invoiceId={isAdmin ? createdInvoice : null}
           unlockPin={searchParams.get('unlock_pin')}
           activationWarning={searchParams.get('activation_warning')}
+          showFinanceLinks={isAdmin}
         />
       )}
 
+      {isAdmin && (
+      <>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <button
           type="button"
@@ -344,6 +378,8 @@ export default function SalesPage({
           </div>
         ))}
       </div>
+      </>
+      )}
 
       <Panel>
         <div className="space-y-4">
@@ -352,7 +388,7 @@ export default function SalesPage({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Status
@@ -384,6 +420,40 @@ export default function SalesPage({
                 <option value="installment">Installment</option>
               </select>
             </div>
+            <div>
+              <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                State
+              </label>
+              <div className="mt-1.5">
+                <SearchableSelect
+                  options={['All states', ...NIGERIAN_STATES]}
+                  value={selectedState || 'All states'}
+                  onChange={(v) => {
+                    setSelectedState(v === 'All states' ? '' : v)
+                    setSelectedLga('')
+                  }}
+                  placeholder="Search state…"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                LGA
+              </label>
+              <div className="mt-1.5">
+                <SearchableSelect
+                  options={selectedState ? ['All LGAs', ...lgaOptions] : ['Select a state first']}
+                  value={
+                    selectedLga || (selectedState ? 'All LGAs' : 'Select a state first')
+                  }
+                  onChange={(v) =>
+                    setSelectedLga(v === 'All LGAs' || v === 'Select a state first' ? '' : v)
+                  }
+                  disabled={!selectedState}
+                  placeholder="Search LGA…"
+                />
+              </div>
+            </div>
           </div>
         </div>
       </Panel>
@@ -398,17 +468,16 @@ export default function SalesPage({
                   'Customer',
                   'Date',
                   'Payment',
-                  'Amount',
-                  'Paid',
+                  ...(isAdmin ? ['Amount', 'Paid'] : []),
                   'Status',
                   'PIN',
                   'Details',
                   ...(isAdmin ? ['Action'] : []),
-                ].map((h, i) => (
+                ].map((h) => (
                     <th
                       key={h}
                       className={`px-5 py-3.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground ${
-                        i === 4 || i === 5 ? 'text-right' : 'text-left'
+                        h === 'Amount' || h === 'Paid' ? 'text-right' : 'text-left'
                       }`}
                     >
                       {h}
@@ -418,11 +487,11 @@ export default function SalesPage({
               </tr>
             </thead>
             <tbody>
-              {filteredSales.slice(0, 50).map((sale) => {
+              {paged.map((sale) => {
                 const customer = customers.get(sale.customer_id)
                 const schedule = schedules.get(sale.id)
                 const isExpanded = expandedSale === sale.id
-                const colSpan = isAdmin ? 10 : 9
+                const colSpan = isAdmin ? 10 : 7
 
                 return (
                   <Fragment key={sale.id}>
@@ -445,12 +514,16 @@ export default function SalesPage({
                           {paymentPlanLabel(sale)}
                         </span>
                       </td>
+                      {isAdmin && (
+                        <>
                       <td className="px-5 py-4 text-right font-medium tabular-nums">
                         {formatCurrency(sale.total_amount)}
                       </td>
                       <td className="px-5 py-4 text-right font-medium tabular-nums text-emerald-700 dark:text-emerald-400">
                         {formatCurrency(sale.amount_paid)}
                       </td>
+                        </>
+                      )}
                       <td className="px-5 py-4">
                         <span
                           className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${statusColors[sale.status]}`}
@@ -475,17 +548,30 @@ export default function SalesPage({
                       </td>
                       {isAdmin && (
                         <td className="px-5 py-4">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                            disabled={isPending || deletingId === sale.id}
-                            onClick={() => handleDelete(sale)}
-                          >
-                            <Trash2 className="size-3.5" />
-                            {deletingId === sale.id ? 'Deleting…' : 'Delete'}
-                          </Button>
+                          <div className="flex flex-wrap gap-2">
+                            <Link href={`/sales/${sale.id}/edit`}>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="gap-1.5"
+                              >
+                                <Pencil className="size-3.5" />
+                                Edit
+                              </Button>
+                            </Link>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              disabled={isPending || deletingId === sale.id}
+                              onClick={() => handleDelete(sale)}
+                            >
+                              <Trash2 className="size-3.5" />
+                              {deletingId === sale.id ? 'Deleting…' : 'Delete'}
+                            </Button>
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -579,9 +665,11 @@ export default function SalesPage({
                                           {inst.status}
                                         </span>
                                       </div>
+                                      {isAdmin && (
                                       <p className="mt-1 font-display text-sm font-semibold tabular-nums">
                                         {formatCurrency(inst.amount)}
                                       </p>
+                                      )}
                                       <p className="mt-0.5 text-xs text-muted-foreground">
                                         Due {formatDate(inst.due_date)}
                                       </p>
@@ -609,6 +697,9 @@ export default function SalesPage({
             </tbody>
           </table>
         </div>
+        {filteredSales.length > 0 && (
+          <TablePagination page={page} total={total} onPageChange={setPage} />
+        )}
         {filteredSales.length === 0 && (
           <div className="px-6 py-16 text-center">
             <p className="font-medium">{sales.length === 0 ? 'No sales yet' : 'No sales found'}</p>

@@ -45,6 +45,7 @@ export default async function EditSaleDraftPage({
         products={products}
         forcedGeo={forcedGeo}
         draftId={localId}
+        showMoney={access.isAdmin}
       />
     </PageShell>
   )

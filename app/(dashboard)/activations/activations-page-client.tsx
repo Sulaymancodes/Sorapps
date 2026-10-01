@@ -11,6 +11,7 @@ import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
 import { SearchField } from '@/components/common/SearchField'
 import { SearchableSelect } from '@/components/common/SearchableSelect'
+import { TablePagination, usePagedList } from '@/components/common/TablePagination'
 import {
   resendActivationSmsAction,
   sendActivationSmsAction,
@@ -95,6 +96,7 @@ export function ActivationsPageClient({
   smsConfigured,
   beebeeConfigured,
   baseValidityDays,
+  showMoney = true,
 }: {
   customers: CustomerOption[]
   sales: SaleOption[]
@@ -103,6 +105,7 @@ export function ActivationsPageClient({
   smsConfigured: boolean
   beebeeConfigured: boolean
   baseValidityDays: number
+  showMoney?: boolean
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -190,6 +193,8 @@ export function ActivationsPageClient({
         (a.payment_id || '').toLowerCase().includes(q)
     )
   }, [activations, search])
+
+  const { page, setPage, paged, total } = usePagedList(filtered, search)
 
   function onCustomerChange(id: string) {
     setCustomerId(id)
@@ -343,10 +348,12 @@ export function ActivationsPageClient({
                     </p>
                     <p className="mt-0.5 font-medium">
                       {beneficiarySale
-                        ? `${beneficiarySale.id} · ${formatCurrency(beneficiarySale.total_amount)} · ${formatDate(new Date(beneficiarySale.date))}`
+                        ? showMoney
+                          ? `${beneficiarySale.id} · ${formatCurrency(beneficiarySale.total_amount)} · ${formatDate(new Date(beneficiarySale.date))}`
+                          : `${beneficiarySale.id} · ${formatDate(new Date(beneficiarySale.date))}`
                         : 'No sale on record for this customer'}
                     </p>
-                    {beneficiarySale && (
+                    {beneficiarySale && showMoney && (
                       <p className="mt-1 text-xs text-muted-foreground">
                         Stipulated next: {formatCurrency(beneficiarySale.expected_amount)} ·
                         Outstanding {formatCurrency(beneficiarySale.outstanding)}
@@ -393,6 +400,7 @@ export function ActivationsPageClient({
               />
             </div>
 
+            {showMoney && (
             <div>
               <Label htmlFor="amount">Amount paid (₦)</Label>
               <Input
@@ -411,6 +419,7 @@ export function ActivationsPageClient({
                 pay less for a shorter (partial) period.
               </p>
             </div>
+            )}
 
             {calc && (
               <div className="rounded-lg border border-border/70 bg-background px-3 py-2 text-xs">
@@ -418,10 +427,12 @@ export function ActivationsPageClient({
                   Calculated validity: {calc.validity_days} days
                   {calc.is_partial ? ' · partial payment' : ''}
                 </p>
+                {showMoney ? (
                 <p className="mt-0.5 text-muted-foreground">
                   {(calc.ratio * 100).toFixed(0)}% of {formatCurrency(expectedAmount)} →{' '}
                   {calc.validity_days} / {baseValidityDays} base days
                 </p>
+                ) : null}
               </div>
             )}
 
@@ -463,7 +474,7 @@ export function ActivationsPageClient({
         </Panel>
 
         <div className="space-y-6">
-          <Panel title="Activation history" description="Codes, amounts, validity, and linked payments">
+          <Panel title="Activation history" description={showMoney ? 'Codes, amounts, validity, and linked payments' : 'Codes, validity, and linked devices'}>
             <SearchField
               placeholder="Search by customer, phone, code, serial, payment…"
               value={search}
@@ -479,7 +490,7 @@ export function ActivationsPageClient({
                     {[
                       'Customer',
                       'Code',
-                      'Amount',
+                      ...(showMoney ? ['Amount'] : []),
                       'Validity',
                       'Device',
                       'Status',
@@ -496,7 +507,7 @@ export function ActivationsPageClient({
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((row) => (
+                  {paged.map((row) => (
                     <tr
                       key={row.id}
                       className="border-b border-border/60 last:border-0 hover:bg-muted/40"
@@ -511,6 +522,7 @@ export function ActivationsPageClient({
                       <td className="px-4 py-3 font-mono text-sm font-semibold tracking-wider">
                         {row.code}
                       </td>
+                      {showMoney && (
                       <td className="px-4 py-3 text-sm tabular-nums">
                         {row.amount_paid > 0 ? formatCurrency(row.amount_paid) : '—'}
                         {row.is_partial && (
@@ -519,6 +531,7 @@ export function ActivationsPageClient({
                           </span>
                         )}
                       </td>
+                      )}
                       <td className="px-4 py-3 text-sm tabular-nums">{row.validity_days}d</td>
                       <td className="px-4 py-3 text-sm">
                         {row.device_serial || '—'}
@@ -562,6 +575,9 @@ export function ActivationsPageClient({
                 </tbody>
               </table>
             </div>
+            {filtered.length > 0 && (
+              <TablePagination page={page} total={total} onPageChange={setPage} />
+            )}
             {filtered.length === 0 && (
               <div className="px-6 py-16 text-center">
                 <MessageSquare className="mx-auto mb-3 size-10 text-muted-foreground" />

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PageShell } from '@/components/common/PageShell'
 import { Panel } from '@/components/common/Panel'
+import { TablePagination, usePagedList } from '@/components/common/TablePagination'
 import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import type { InventoryMovement, Product } from '@/lib/types/crm'
 import { cn } from '@/lib/utils'
@@ -42,17 +43,25 @@ function InventoryPageContent({
     return products
   }, [products, filter])
 
-  const recentMovements = useMemo(() => {
+  const { page, setPage, paged, total } = usePagedList(filteredProducts, filter)
+
+  const allMovements = useMemo(() => {
     const productMap = new Map(products.map((p) => [p.id, p]))
     return [...movements]
       .sort((a, b) => b.date.getTime() - a.date.getTime())
-      .slice(0, 15)
       .map((m) => ({
         ...m,
         productName: productMap.get(m.product_id)?.name || m.product_id,
         unit: productMap.get(m.product_id)?.unit || 'pcs',
       }))
   }, [movements, products])
+
+  const {
+    page: movementPage,
+    setPage: setMovementPage,
+    paged: pagedMovements,
+    total: movementTotal,
+  } = usePagedList(allMovements, allMovements.length)
 
   const filterButtons = [
     { key: 'all' as const, label: 'All Products' },
@@ -155,7 +164,7 @@ function InventoryPageContent({
               </tr>
             </thead>
             <tbody>
-              {filteredProducts.slice(0, 40).map((product) => (
+              {paged.map((product) => (
                 <tr
                   key={product.id}
                   className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40"
@@ -188,6 +197,9 @@ function InventoryPageContent({
             </tbody>
           </table>
         </div>
+        {filteredProducts.length > 0 && (
+          <TablePagination page={page} total={total} onPageChange={setPage} />
+        )}
         {filteredProducts.length === 0 && (
           <div className="px-6 py-16 text-center">
             <p className="font-medium">No products match this filter</p>
@@ -196,7 +208,7 @@ function InventoryPageContent({
         )}
       </Panel>
 
-      <Panel padded={false} title="Recent movements" description="Latest stock in, out, and adjustments">
+      <Panel padded={false} title="Stock movements" description="Stock in, out, and adjustments">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -214,7 +226,7 @@ function InventoryPageContent({
               </tr>
             </thead>
             <tbody>
-              {recentMovements.map((movement) => (
+              {pagedMovements.map((movement) => (
                 <tr
                   key={movement.id}
                   className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40"
@@ -241,7 +253,10 @@ function InventoryPageContent({
             </tbody>
           </table>
         </div>
-        {recentMovements.length === 0 && (
+        {movementTotal > 0 && (
+          <TablePagination page={movementPage} total={movementTotal} onPageChange={setMovementPage} />
+        )}
+        {movementTotal === 0 && (
           <div className="px-6 py-16 text-center">
             <p className="font-medium">No movements yet</p>
             <p className="mt-1 text-sm text-muted-foreground">Record a stock movement to get started</p>

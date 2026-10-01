@@ -234,6 +234,7 @@ export async function scanBeneficiaryDuplicatesAction(input: {
   beneficiary_id?: string
   serial?: string | string[]
   exclude_id?: string
+  exclude_sale_id?: string
 }): Promise<ActionResult<DuplicateScanResult>> {
   try {
     await requireSession()

@@ -569,7 +569,7 @@ export function DashboardShell({
                                   )}
                                 </p>
                                 <p className="mt-1 text-xs text-muted-foreground">
-                                  {formatCurrency(reminder.amount)} ·{' '}
+                                  {isAgent ? null : `${formatCurrency(reminder.amount)} · `}
                                   {formatDate(new Date(reminder.due_date))}
                                   {reminder.status === 'overdue' ? ' · Overdue' : ''}
                                 </p>

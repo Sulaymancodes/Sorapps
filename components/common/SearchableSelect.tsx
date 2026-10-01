@@ -163,12 +163,12 @@ export function SearchableSelect({
         <div
           id={listId}
           role="listbox"
-          className="absolute left-0 right-0 top-11 z-50 overflow-hidden rounded-xl border border-border/80 bg-card shadow-xl"
+          className="relative z-20 mt-1.5 overflow-hidden rounded-xl border border-border/80 bg-card shadow-xl"
         >
           {filtered.length === 0 ? (
             <p className="px-4 py-8 text-center text-sm text-muted-foreground">{emptyLabel}</p>
           ) : (
-            <ul className="max-h-64 overflow-y-auto py-1">
+            <ul className="max-h-80 overflow-y-auto py-1">
               {filtered.map((option, index) => {
                 const active = index === activeIndex
                 const isSelected = option === value
