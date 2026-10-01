@@ -17,6 +17,7 @@ import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { useOfflineSyncOptional } from '@/components/offline/offline-sync-context'
 import { NIGERIAN_STATES } from '@/lib/constants/options'
 import { getLgasForState } from '@/lib/constants/lgas'
+import { todayInLagos, toDateInputValue } from '@/lib/paygo/schedule'
 import { formatCurrency, formatDate } from '@/lib/utils/formatting'
 import type {
   Customer,
@@ -47,16 +48,29 @@ function paymentPlanDetail(sale: Sale) {
   return 'Installment timeline'
 }
 
+function lagosDayKey(value: Date | string) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Lagos',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(value))
+}
+
 export default function SalesPage({
   sales,
   customers: customersList,
   schedules: schedulesList,
   isAdmin = false,
+  assignedLga = '',
+  assignedState = '',
 }: {
   sales: Sale[]
   customers: Customer[]
   schedules: PaymentSchedule[]
   isAdmin?: boolean
+  assignedLga?: string
+  assignedState?: string
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -135,6 +149,13 @@ export default function SalesPage({
       active_installments,
     }
   }, [geoSales, schedulesList])
+
+  const todayKey = toDateInputValue(todayInLagos())
+  const todayCount = useMemo(
+    () => sales.filter((s) => lagosDayKey(s.date) === todayKey).length,
+    [sales, todayKey]
+  )
+  const territoryLabel = [assignedLga, assignedState].filter(Boolean).join(', ')
 
   const statuses: Array<{ label: string; value: Sale['status'] }> = [
     { label: 'Pending Payment', value: 'pending_payment' },
@@ -225,7 +246,9 @@ export default function SalesPage({
             ? 'No sales yet — add customers and products, then create your first sale'
             : isAdmin
               ? 'Every sale is either full payment or weekly installment'
-              : undefined
+              : territoryLabel
+                ? `${territoryLabel}`
+                : undefined
         }
         actions={
           <div className="flex flex-wrap gap-2">
@@ -271,6 +294,27 @@ export default function SalesPage({
           activationWarning={searchParams.get('activation_warning')}
           showFinanceLinks={isAdmin}
         />
+      )}
+
+      {!isAdmin && (
+        <div className="grid grid-cols-2 gap-4">
+          <div className="surface-panel p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Today{territoryLabel ? ` · ${territoryLabel}` : ''}
+            </p>
+            <p className="mt-1 font-display text-2xl font-semibold tabular-nums">{todayCount}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {todayCount === 1 ? 'sale entered today' : 'sales entered today'}
+            </p>
+          </div>
+          <div className="surface-panel p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Total sales{territoryLabel ? ` · ${territoryLabel}` : ''}
+            </p>
+            <p className="mt-1 font-display text-2xl font-semibold tabular-nums">{sales.length}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">All sales in this LGA</p>
+          </div>
+        </div>
       )}
 
       {isAdmin && (

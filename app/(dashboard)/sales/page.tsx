@@ -35,6 +35,8 @@ export default async function SalesRoutePage() {
           customers={scopedCustomers}
           schedules={scopedSchedules}
           isAdmin={access.isAdmin}
+          assignedLga={access.assignedLga}
+          assignedState={access.assignedState}
         />
       </Suspense>
     )
