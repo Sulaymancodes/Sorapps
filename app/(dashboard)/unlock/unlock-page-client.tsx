@@ -79,7 +79,7 @@ export function UnlockPageClient({
 }) {
   const [pending, startTransition] = useTransition()
   const [serial, setSerial] = useState('')
-  const [days, setDays] = useState<(typeof PARTIAL_DAYS)[number]>(30)
+  const [period, setPeriod] = useState<(typeof PARTIAL_DAYS)[number] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [latest, setLatest] = useState<UnlockRow | null>(null)
   const [rows, setRows] = useState(history)
@@ -138,13 +138,14 @@ export function UnlockPageClient({
     return 'all dates'
   }, [dateFrom, dateTo])
 
-  function runUnlock(kind: 'partial' | 'full') {
+  function runUnlock() {
+    const kind = period ? 'partial' : 'full'
     setError(null)
     startTransition(async () => {
       const result = await resolveUnlockPinAction({
         serial_number: serial,
         kind,
-        validity_days: kind === 'partial' ? days : undefined,
+        validity_days: period ?? undefined,
       })
       if (!result.success) {
         setError(result.error)
@@ -213,50 +214,43 @@ export function UnlockPageClient({
               inputClassName="font-mono"
             />
 
-            <div>
-              <p className="mb-2 text-sm font-medium">Partial period</p>
-              <div className="flex flex-wrap gap-2">
-                {PARTIAL_DAYS.map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setDays(value)}
-                    className={cn(
-                      'rounded-full border px-3 py-1.5 text-sm font-medium transition-colors',
-                      days === value
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground'
-                    )}
-                  >
-                    {value} days
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {error && (
               <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {error}
               </p>
             )}
 
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={pending || !serial.trim()}
-                onClick={() => runUnlock('partial')}
-              >
-                {pending ? 'Unlocking…' : 'Partial unlock'}
-              </Button>
-              <Button
-                type="button"
-                disabled={pending || !serial.trim()}
-                onClick={() => runUnlock('full')}
-              >
-                {pending ? 'Unlocking…' : 'Full unlock'}
-              </Button>
-            </div>
+            <Button
+              type="button"
+              className="w-full"
+              disabled={pending || !serial.trim()}
+              onClick={runUnlock}
+            >
+              {pending ? 'Unlocking…' : period ? `Unlock · ${period} days` : 'Unlock'}
+            </Button>
+
+            <details className="group">
+              <summary className="cursor-pointer list-none text-xs text-muted-foreground/55 transition-colors hover:text-muted-foreground [&::-webkit-details-marker]:hidden">
+                Limited period
+              </summary>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {PARTIAL_DAYS.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setPeriod((current) => (current === value ? null : value))}
+                    className={cn(
+                      'rounded-md border px-2 py-1 text-xs transition-colors',
+                      period === value
+                        ? 'border-foreground/30 bg-muted text-foreground'
+                        : 'border-transparent text-muted-foreground/80 hover:border-border hover:text-foreground'
+                    )}
+                  >
+                    {value}d
+                  </button>
+                ))}
+              </div>
+            </details>
 
             {displayed ? (
               <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-4">

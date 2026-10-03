@@ -119,19 +119,15 @@ async function syncOneSaleDraft(draft: SaleDraft) {
   const documents = await uploadPendingDocuments(draft.documents)
   const gps = draft.siteGps
   const costToEndUser = Number(values.cost_to_end_user_ngn) || 0
-  const downpayment =
-    values.payment_type === 'full' ? costToEndUser : Number(values.downpayment_amount_ngn) || 0
+  const downpayment = costToEndUser
 
   const result = await createSaleAction({
     customer_id: customerId,
     new_customer: newCustomer,
-    payment_type: values.payment_type,
+    payment_type: 'full',
     payment_method: values.payment_method,
-    installment_interval_days:
-      values.payment_type === 'installment'
-        ? Math.round(Number(values.installment_interval_days))
-        : undefined,
-    plan_end_date: values.payment_type === 'installment' ? values.plan_end_date : undefined,
+    installment_interval_days: undefined,
+    plan_end_date: undefined,
     discount_percent: 0,
     transport_cost: 0,
     notes: '',

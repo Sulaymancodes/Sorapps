@@ -6,8 +6,6 @@ import { useRouter } from 'next/navigation'
 import {
   Plus,
   Trash2,
-  CreditCard,
-  CalendarClock,
   Search,
   Lock,
   Unlock,
@@ -26,18 +24,8 @@ import {
   DARES_CUSTOMER_TYPES,
   DARES_GENDERS,
 } from '@/lib/constants/dares'
-import {
-  GUARDIAN_RELATIONSHIPS,
-  INSTALLMENT_WEEK_OPTIONS,
-  NIGERIAN_STATES,
-} from '@/lib/constants/options'
-import {
-  addLocalDays,
-  parseDateInput,
-  previewInstallmentPlan,
-  toDateInputValue,
-  todayInLagos,
-} from '@/lib/paygo/schedule'
+import { GUARDIAN_RELATIONSHIPS, NIGERIAN_STATES } from '@/lib/constants/options'
+import { addLocalDays, toDateInputValue, todayInLagos } from '@/lib/paygo/schedule'
 import { getLgasForState } from '@/lib/constants/lgas'
 import { checkSoldSerialsAction, createSaleAction, updateSaleAction } from '@/app/actions/sales'
 import { resolveUnlockPinAction } from '@/app/actions/unlocks'
@@ -526,7 +514,7 @@ export function SaleForm({
       customer_mode: 'new',
       customer_id: customer?.id || '',
       new_customer: customerToFormValues(customer),
-      payment_type: sale?.payment_type || 'full',
+      payment_type: 'full',
       payment_method: sale?.payment_method || 'cash',
       installment_interval_days: sale?.installment_interval_days || 7,
       plan_end_date: sale?.plan_end_date
@@ -552,25 +540,12 @@ export function SaleForm({
   })
 
   const { fields, append, remove } = useFieldArray({ control, name: 'items' })
-  const paymentType = useWatch({ control, name: 'payment_type' })
-  const installmentIntervalDays = useWatch({ control, name: 'installment_interval_days' })
-  const planEndDate = useWatch({ control, name: 'plan_end_date' })
-  const isInstallment = paymentType === 'installment'
   const watchedItems = useWatch({ control, name: 'items' })
   const selectedState = useWatch({ control, name: 'new_customer.state' }) || ''
   const selectedLga = useWatch({ control, name: 'new_customer.lga' }) || ''
   const firstProductId = watchedItems?.[0]?.product_id || ''
-  const unlockKind = paymentType === 'full' ? 'full' : 'partial'
-  const unlockDays = Math.max(1, Math.round(Number(installmentIntervalDays) || 7))
-  const unlockLabel = unlockKind === 'full' ? 'full unlock' : `${unlockDays}-day PIN`
-
-  useEffect(() => {
-    if (isEdit && sale?.unlock_pin) {
-      return
-    }
-    setLinePins({})
-    setActivateError({})
-  }, [paymentType, installmentIntervalDays, isEdit, sale?.unlock_pin])
+  const unlockKind = 'full' as const
+  const unlockLabel = 'full unlock'
 
   const deploymentState = selectedState
   const deploymentLga = selectedLga
@@ -673,30 +648,6 @@ export function SaleForm({
       )
     })
   }, [draftId, reset])
-
-  const planPreview = useMemo(() => {
-    if (!isInstallment) return null
-    return previewInstallmentPlan({
-      total: totals.total,
-      endDateIso: planEndDate || '',
-      intervalDays: Number(installmentIntervalDays) || 7,
-      startDate: todayInLagos(),
-    })
-  }, [isInstallment, totals.total, planEndDate, installmentIntervalDays])
-
-  const minPlanEndDate = toDateInputValue(addLocalDays(todayInLagos(), 1))
-
-  function applyWeekPreset(weeks: number) {
-    const end = addLocalDays(todayInLagos(), weeks * 7)
-    setValue('plan_end_date', toDateInputValue(end), {
-      shouldValidate: true,
-      shouldDirty: true,
-    })
-    setValue('installment_interval_days', 7, {
-      shouldValidate: true,
-      shouldDirty: true,
-    })
-  }
 
   const clearFieldError = useCallback(
     (field: DuplicateField) => {
@@ -1096,7 +1047,7 @@ export function SaleForm({
       const result = await resolveUnlockPinAction({
         serial_number: serial,
         kind: unlockKind,
-        validity_days: unlockKind === 'partial' ? unlockDays : undefined,
+        validity_days: undefined,
       })
       if (!result.success) {
         setActivateError((current) => ({ ...current, [index]: result.error }))
@@ -1271,28 +1222,6 @@ export function SaleForm({
       return
     }
 
-    if (values.payment_type === 'installment') {
-      const interval = Math.round(Number(values.installment_interval_days))
-      if (!Number.isFinite(interval) || interval < 1 || interval > 365) {
-        setError('installment_interval_days', {
-          message: 'Enter payment interval in days (1–365)',
-        })
-        return
-      }
-      if (!values.plan_end_date) {
-        setError('plan_end_date', { message: 'Choose a plan end date' })
-        return
-      }
-      const end = parseDateInput(values.plan_end_date)
-      const start = (isEdit && asDate(sale?.date)) || todayInLagos()
-      if (Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
-        setError('plan_end_date', {
-          message: `Plan end date must be after the sale date (${toDateInputValue(start)})`,
-        })
-        return
-      }
-    }
-
     const qtyByProduct = new Map<string, number>()
     values.items
       .filter((item) => item.product_id)
@@ -1389,7 +1318,7 @@ export function SaleForm({
         return
       }
 
-      const claim = daresClaimFromSale(values.payment_type, values.payment_method, totals.total)
+      const claim = daresClaimFromSale('full', values.payment_method, totals.total)
       const result = await updateSaleAction(sale.id, {
         customer_id: sale.customer_id,
         new_customer: {
@@ -1433,14 +1362,10 @@ export function SaleForm({
             ? (values.new_customer.next_of_kin_relationship || '').trim()
             : '',
         },
-        payment_type: values.payment_type,
+        payment_type: 'full',
         payment_method: values.payment_method,
-        installment_interval_days:
-          values.payment_type === 'installment'
-            ? Math.round(Number(values.installment_interval_days))
-            : undefined,
-        plan_end_date:
-          values.payment_type === 'installment' ? values.plan_end_date : undefined,
+        installment_interval_days: undefined,
+        plan_end_date: undefined,
         discount_percent: 0,
         transport_cost: 0,
         notes: values.notes || sale.notes || '',
@@ -1514,7 +1439,7 @@ export function SaleForm({
       return
     }
 
-    const claim = daresClaimFromSale(values.payment_type, values.payment_method, totals.total)
+    const claim = daresClaimFromSale('full', values.payment_method, totals.total)
     const firstSerial = values.items.find((item) => item.product_id)?.serial_number.trim() || ''
     const preparedUnlockPin =
       Object.values(linePins).find((row) => sameSerialKey(row.serial, firstSerial))?.pin ||
@@ -1562,14 +1487,10 @@ export function SaleForm({
                 ? (values.new_customer.next_of_kin_relationship || '').trim()
                 : '',
             },
-      payment_type: values.payment_type,
+      payment_type: 'full',
       payment_method: values.payment_method,
-      installment_interval_days:
-        values.payment_type === 'installment'
-          ? Math.round(Number(values.installment_interval_days))
-          : undefined,
-      plan_end_date:
-        values.payment_type === 'installment' ? values.plan_end_date : undefined,
+      installment_interval_days: undefined,
+      plan_end_date: undefined,
       discount_percent: 0,
       transport_cost: 0,
       notes: '',
@@ -2101,61 +2022,6 @@ export function SaleForm({
             </div>
 
           <div>
-            <Label>Payment type</Label>
-            <div className="mt-1.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() =>
-                  setValue('payment_type', 'full', {
-                    shouldValidate: true,
-                    shouldDirty: true,
-                    shouldTouch: true,
-                  })
-                }
-                className={cn(
-                  'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
-                  !isInstallment
-                    ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
-                    : 'border-border/80 hover:border-primary/40'
-                )}
-              >
-                <CreditCard className="mt-0.5 size-5 text-primary" />
-                <div>
-                  <p className="font-medium">Full payment</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    Paid in full — no outstanding balance on this sale
-                  </p>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setValue('payment_type', 'installment', {
-                    shouldValidate: true,
-                    shouldDirty: true,
-                    shouldTouch: true,
-                  })
-                }
-                className={cn(
-                  'flex items-start gap-3 rounded-xl border p-4 text-left transition-all',
-                  isInstallment
-                    ? 'border-accent bg-accent/10 ring-2 ring-accent/20'
-                    : 'border-border/80 hover:border-accent/40'
-                )}
-              >
-                <CalendarClock className="mt-0.5 size-5 text-accent" />
-                <div>
-                  <p className="font-medium">Installment / PAYGO</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    Pick end date and how often (every 7 / 14 / 30 days)
-                  </p>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          <div>
             <Label htmlFor="payment_method">Payment method</Label>
             <Select id="payment_method" className="mt-1.5" {...register('payment_method')}>
               <option value="cash">Cash</option>
@@ -2164,83 +2030,9 @@ export function SaleForm({
               <option value="cheque">Cheque</option>
             </Select>
             <p className="mt-1 text-xs text-muted-foreground">
-              {isInstallment
-                ? 'Preferred collection method for this PAYGO plan'
-                : 'How this full payment was received'}
+              How this full payment was received
             </p>
           </div>
-
-          {isInstallment && (
-            <div className="space-y-4 rounded-xl border border-border/70 bg-secondary/20 p-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <Label htmlFor="plan_end_date">Plan end date</Label>
-                  <Input
-                    id="plan_end_date"
-                    type="date"
-                    min={minPlanEndDate}
-                    {...register('plan_end_date')}
-                    className="mt-1.5"
-                  />
-                  {errors.plan_end_date && (
-                    <p className="mt-1 text-xs text-destructive">{errors.plan_end_date.message}</p>
-                  )}
-                </div>
-                <div>
-                  <Label htmlFor="installment_interval_days">Payment every</Label>
-                  <div className="mt-1.5 flex items-center gap-2">
-                    <Input
-                      id="installment_interval_days"
-                      type="number"
-                      min={1}
-                      max={365}
-                      step={1}
-                      inputMode="numeric"
-                      {...register('installment_interval_days', { valueAsNumber: true })}
-                      className="max-w-[140px]"
-                    />
-                    <span className="text-sm text-muted-foreground">days</span>
-                  </div>
-                  {errors.installment_interval_days && (
-                    <p className="mt-1 text-xs text-destructive">
-                      {errors.installment_interval_days.message}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Quick end-date presets
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {INSTALLMENT_WEEK_OPTIONS.map((weeks) => (
-                    <button
-                      key={weeks}
-                      type="button"
-                      onClick={() => applyWeekPreset(weeks)}
-                      className="rounded-lg border border-border/80 bg-background px-3 py-1.5 text-xs font-medium hover:border-accent/50"
-                    >
-                      {weeks} weeks
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {planPreview && (
-                <div className="rounded-lg border border-border/60 bg-background px-3 py-2 text-sm">
-                  <p className="font-medium">
-                    {planPreview.count} payment{planPreview.count === 1 ? '' : 's'}
-                    {showMoney ? ` · ${formatCurrency(planPreview.amount)} each` : ''}
-                  </p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    First due {formatDate(planPreview.first_due)} · Last due{' '}
-                    {formatDate(planPreview.last_due)}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </Panel>
 
