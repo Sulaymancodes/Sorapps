@@ -1628,9 +1628,6 @@ export function SaleForm({
     if (result.data.unlock_pin) {
       createdQuery.set('unlock_pin', result.data.unlock_pin)
     }
-    if (result.data.activation_warning) {
-      createdQuery.set('activation_warning', result.data.activation_warning)
-    }
     document.querySelector('main')?.scrollTo({ top: 0, left: 0 })
     window.scrollTo({ top: 0, left: 0 })
     const soldSerials = values.items.filter((item) => item.product_id).map((item) => item.serial_number)

@@ -308,37 +308,3 @@ export async function resendActivationSms(id: string): Promise<{ activation: Act
     payment_id: existing.paymentId || undefined,
   })
 }
-
-export async function issueActivationForSale(input: {
-  sale_id: string
-  customer_id: string
-  amount_paid: number
-  expected_amount?: number
-  payment_type?: string
-  phone?: string
-  created_by_user_id?: string
-  existing_pin?: string
-}): Promise<{ activation: ActivationRecord }> {
-  const warrantyRows = await db
-    .select()
-    .from(warranties)
-    .where(eq(warranties.saleId, input.sale_id))
-
-  const warranty = warrantyRows.find((row) => row.serialNumber.trim())
-  if (!warranty) {
-    throw new Error('Add the device serial on the sale before sending a BeeBeeJump PIN')
-  }
-
-  return sendActivationSms({
-    customer_id: input.customer_id,
-    sale_id: input.sale_id,
-    warranty_id: warranty.id,
-    device_serial: warranty.serialNumber,
-    phone: input.phone,
-    amount_paid: input.amount_paid,
-    expected_amount: input.expected_amount,
-    forever: input.payment_type === 'full',
-    created_by_user_id: input.created_by_user_id,
-    existing_pin: input.existing_pin,
-  })
-}

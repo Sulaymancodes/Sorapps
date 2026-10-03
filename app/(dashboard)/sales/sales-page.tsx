@@ -291,7 +291,6 @@ export default function SalesPage({
           saleId={createdId}
           invoiceId={isAdmin ? createdInvoice : null}
           unlockPin={searchParams.get('unlock_pin')}
-          activationWarning={searchParams.get('activation_warning')}
           showFinanceLinks={isAdmin}
         />
       )}

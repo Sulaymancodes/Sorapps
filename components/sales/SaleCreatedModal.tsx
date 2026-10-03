@@ -12,13 +12,11 @@ export function SaleCreatedModal({
   saleId,
   invoiceId,
   unlockPin,
-  activationWarning,
   showFinanceLinks = true,
 }: {
   saleId: string
   invoiceId?: string | null
   unlockPin?: string | null
-  activationWarning?: string | null
   showFinanceLinks?: boolean
 }) {
   const router = useRouter()
@@ -109,18 +107,9 @@ export function SaleCreatedModal({
               {unlockPin}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Saved on this sale. The customer should also get it by SMS.
+              Enter this PIN on the unit. It is also saved on the sale.
             </p>
           </div>
-        ) : null}
-        {activationWarning ? (
-          <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
-            Device PIN SMS was not sent: {activationWarning}
-          </p>
-        ) : !unlockPin ? (
-          <p className="mt-3 text-sm text-muted-foreground">
-            If the serial was captured, the customer should receive a device PIN by SMS.
-          </p>
         ) : null}
 
         <div className="mt-6 flex flex-wrap gap-2">

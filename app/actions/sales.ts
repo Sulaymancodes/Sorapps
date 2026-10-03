@@ -5,8 +5,7 @@ import { z } from 'zod'
 import { getSessionAccess, requireAdmin, requireSession } from '@/lib/auth-server'
 import { createCustomerDocuments } from '@/lib/services/documents'
 import { getCustomer } from '@/lib/services/customers'
-import { issueActivationForSale } from '@/lib/services/activations'
-import { createSale, deleteSale, getSaleUnlockPin, updateSale } from '@/lib/services/sales'
+import { createSale, deleteSale, updateSale } from '@/lib/services/sales'
 import { assertSerialsNotSold, findSoldSerials } from '@/lib/services/serials'
 import { attachUnlockPinToSale } from '@/lib/services/unlocks'
 import { parseDeviceSerials, type SoldSerialHit } from '@/lib/utils/serial'
@@ -142,8 +141,6 @@ export async function createSaleAction(
     sale: Sale
     invoice: Invoice
     schedule: PaymentSchedule
-    activation_id?: string
-    activation_warning?: string
     unlock_pin?: string
   }>
 > {
@@ -195,42 +192,13 @@ export async function createSaleAction(
       })
     }
 
-    let activationId: string | undefined
-    let activationWarning: string | undefined
     let unlockPin: string | undefined
-    const paidAtSale = result.sale.amount_paid
     const preparedPin = parsed.data.unlock_pin?.trim()
     const firstSerial = parsed.data.items[0]?.serial_number
 
     if (preparedPin) {
       await attachUnlockPinToSale(result.sale.id, firstSerial || '', preparedPin)
       unlockPin = preparedPin
-    }
-
-    if (paidAtSale > 0) {
-      try {
-        const firstInstallment = result.schedule.installments[0]
-        const { activation } = await issueActivationForSale({
-          sale_id: result.sale.id,
-          customer_id: result.sale.customer_id,
-          amount_paid: paidAtSale,
-          expected_amount:
-            result.sale.payment_type === 'full'
-              ? result.sale.total_amount
-              : firstInstallment?.amount || result.sale.total_amount,
-          payment_type: result.sale.payment_type,
-          created_by_user_id: session.user.id,
-          existing_pin: preparedPin,
-        })
-        activationId = activation.id
-        unlockPin = activation.code
-      } catch (error) {
-        activationWarning =
-          error instanceof Error
-            ? error.message
-            : 'Sale saved, but the device PIN SMS could not be sent'
-        unlockPin = preparedPin || (await getSaleUnlockPin(result.sale.id)) || undefined
-      }
     }
 
     revalidatePath('/sales')
@@ -247,8 +215,6 @@ export async function createSaleAction(
       success: true,
       data: {
         ...result,
-        activation_id: activationId,
-        activation_warning: activationWarning,
         unlock_pin: unlockPin,
       },
     }
